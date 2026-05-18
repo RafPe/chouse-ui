@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { BrowserRouter as Router, Routes, Route, Outlet, Navigate } from "react-router-dom";
 import FloatingDock from "@/components/common/FloatingDock";
 import AiChatBubble from "@/components/common/AiChatBubble";
+import CommandPalette from "@/components/common/CommandPalette";
 import HomePage from "@/pages/Home";
 import MonitoringPage from "@/pages/Monitoring";
 import PreferencesPage from "@/pages/Preferences";
@@ -37,6 +38,7 @@ const MainLayout = () => {
     }
   });
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isPaletteOpen, setIsPaletteOpen] = useState(false);
 
   useEffect(() => {
     const handleModeChange = (event: CustomEvent<{ mode: string }>) => {
@@ -47,11 +49,24 @@ const MainLayout = () => {
       setIsFullscreen(!!document.fullscreenElement);
     };
 
+    // Cmd/Ctrl+K — toggle the global command palette.
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        // Skip when a modifier-K combo means something else (e.g. inside a
+        // contenteditable rich editor) — but Monaco doesn't use ⌘K by default,
+        // so this is safe across the app.
+        e.preventDefault();
+        setIsPaletteOpen((open) => !open);
+      }
+    };
+
     window.addEventListener("dock:mode-change", handleModeChange as EventListener);
     document.addEventListener("fullscreenchange", handleFullscreenChange);
+    window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("dock:mode-change", handleModeChange as EventListener);
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      window.removeEventListener("keydown", handleKeyDown);
     };
   }, []);
 
@@ -70,6 +85,9 @@ const MainLayout = () => {
 
       {/* AI Chat Assistant Bubble */}
       <AiChatBubble />
+
+      {/* Global Cmd/Ctrl+K command palette */}
+      <CommandPalette open={isPaletteOpen} onOpenChange={setIsPaletteOpen} />
     </div>
   );
 };

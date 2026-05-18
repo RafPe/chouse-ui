@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useRef } from "react";
+import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { toast } from "sonner";
 import { Loader2, FileX2, Download, ExternalLink, Lightbulb,
          CirclePlay, CircleStop, Wand2, Code2, Search, Network, Sparkles, Keyboard, Save, Copy } from "lucide-react";
@@ -134,6 +134,13 @@ const SqlTab: React.FC<SqlTabProps> = ({ tabId }) => {
   // Ref to the SQL editor — used by the hint strip to invoke editor actions
   const editorRef = useRef<SqlEditorHandle>(null);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
+
+  // Open the Shortcuts dialog when the command palette dispatches the event.
+  useEffect(() => {
+    const handler = () => setIsShortcutsOpen(true);
+    window.addEventListener("shortcuts:open", handler);
+    return () => window.removeEventListener("shortcuts:open", handler);
+  }, []);
 
 
   // Explain state

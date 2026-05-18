@@ -455,6 +455,14 @@ export default function FloatingDock() {
     return () => window.clearTimeout(id);
   }, []);
 
+  // Listen for the global "toggle dock mode" event so the command palette
+  // (and any other surface) can flip floating↔sidebar without holding a ref.
+  useEffect(() => {
+    const handler = () => toggleDockMode();
+    window.addEventListener("dock:toggle-mode", handler);
+    return () => window.removeEventListener("dock:toggle-mode", handler);
+  }, [dockMode]);
+
   const startDrag = (event: React.PointerEvent) => {
     if (event.pointerType === "touch") {
       event.preventDefault();
