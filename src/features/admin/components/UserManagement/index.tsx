@@ -70,6 +70,7 @@ import { toast } from "sonner";
 import { rbacUsersApi, rbacRolesApi, type RbacUser, type RbacRole } from "@/api/rbac";
 import { useRbacStore, RBAC_PERMISSIONS } from "@/stores";
 import { formatDistanceToNow } from "date-fns";
+import { SkeletonCardGrid } from "@/components/common/Skeletons";
 
 // Role display: 2-letter mono code (matches RbacRolesTable / ClickHouseUsers
 // pattern — identity from label, not per-role hue).
@@ -443,11 +444,9 @@ const UserManagement: React.FC = () => {
         </div>
       )}
 
-      {/* Loading State */}
+      {/* Loading State — skeleton card grid */}
       {isLoading && !error && (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="h-6 w-6 animate-spin text-paper-dim" />
-        </div>
+        <SkeletonCardGrid count={6} />
       )}
 
       {/* User Cards */}

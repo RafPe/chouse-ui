@@ -19,6 +19,7 @@ import {
 } from '@/api/rbac';
 import { ApiError } from '@/api/client';
 import { useRbacStore, RBAC_PERMISSIONS } from '@/stores';
+import { SkeletonRows } from '@/components/common/Skeletons';
 
 const configSchema = z.object({
     modelId: z.string().min(1, 'Model is required'),
@@ -160,7 +161,13 @@ export default function ConfigsTab() {
             </div>
 
             {isLoading ? (
-                <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-paper-dim" /></div>
+                <div className="overflow-hidden rounded-xs border border-ink-500 bg-ink-100">
+                    <table className="w-full">
+                        <tbody>
+                            <SkeletonRows count={5} cols={5} />
+                        </tbody>
+                    </table>
+                </div>
             ) : configs.length === 0 ? (
                 <div className="rounded-xs border border-ink-500 bg-ink-100 px-6 py-12 text-center">
                     <Sliders className="mx-auto mb-4 h-8 w-8 text-paper-faint" aria-hidden />

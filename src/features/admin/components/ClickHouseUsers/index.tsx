@@ -96,6 +96,7 @@ import { getSessionId } from '@/api/client';
 import { getDatabases, type DatabaseInfo } from '@/api/explorer';
 import { useRbacStore, useAuthStore, RBAC_PERMISSIONS } from '@/stores';
 import { cn } from '@/lib/utils';
+import { SkeletonRows } from '@/components/common/Skeletons';
 
 // ============================================
 // User Form Dialog Component
@@ -1803,8 +1804,12 @@ export default function ClickHouseUsersManagement() {
 
       {/* Users Table */}
       {isLoading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-paper-dim" />
+        <div className="overflow-hidden rounded-xs border border-ink-500 bg-ink-100">
+          <table className="w-full">
+            <tbody>
+              <SkeletonRows count={5} cols={4} />
+            </tbody>
+          </table>
         </div>
       ) : users.length === 0 ? (
         <div className="rounded-xs border border-ink-500 bg-ink-100 px-6 py-12 text-center">

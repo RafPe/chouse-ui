@@ -76,6 +76,7 @@ import {
 } from '@/api/rbac';
 import { useRbacStore, RBAC_PERMISSIONS } from '@/stores';
 import ConnectionUserAccess from './ConnectionUserAccess';
+import { SkeletonRows } from '@/components/common/Skeletons';
 
 // ============================================
 // Validation Schema
@@ -598,8 +599,12 @@ export default function ConnectionManagement() {
 
       {/* Connections table */}
       {isLoading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-paper-dim" />
+        <div className="overflow-hidden rounded-xs border border-ink-500 bg-ink-100">
+          <table className="w-full">
+            <tbody>
+              <SkeletonRows count={5} cols={5} />
+            </tbody>
+          </table>
         </div>
       ) : connections.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center">

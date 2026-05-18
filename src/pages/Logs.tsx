@@ -70,6 +70,7 @@ const StatCard = ({ title, value, icon: Icon }: StatCardProps) => (
 
 import { useQuery } from "@tanstack/react-query";
 import { rbacUsersApi, rbacRolesApi } from "@/api/rbac";
+import { SkeletonList } from "@/components/common/Skeletons";
 
 interface LogEntry {
   type: string;
@@ -917,12 +918,7 @@ export default function LogsPage({ embedded = false, refreshKey = 0, autoRefresh
           <div className="relative flex h-full flex-col overflow-hidden rounded-md border border-ink-500 bg-ink-100">
             <div className="h-full overflow-auto p-4">
               {isLoading ? (
-                <div className="flex h-64 items-center justify-center">
-                  <div className="flex flex-col items-center gap-3 text-paper-dim">
-                    <RefreshCw className="h-6 w-6 animate-spin" />
-                    <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-paper-faint">Loading logs…</span>
-                  </div>
-                </div>
+                <SkeletonList count={8} />
               ) : filteredLogs.length === 0 ? (
                 <div className="flex h-64 flex-col items-center justify-center">
                   <div className="mb-3 grid h-12 w-12 place-items-center rounded-xs border border-ink-500 bg-ink-200 text-paper-dim">

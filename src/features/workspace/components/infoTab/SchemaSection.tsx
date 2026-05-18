@@ -4,6 +4,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { ColumnDef } from "@tanstack/react-table";
 import { useTableSchema } from "@/hooks";
 import { cn } from "@/lib/utils";
+import { SkeletonRows } from "@/components/common/Skeletons";
 
 interface SchemaSectionProps {
   database: string;
@@ -75,9 +76,12 @@ const SchemaSection: React.FC<SchemaSectionProps> = ({ database, tableName }) =>
 
   if (isLoading) {
     return (
-      <div className="flex h-[300px] flex-col items-center justify-center gap-3 rounded-xs border border-ink-500 bg-ink-100">
-        <Loader2 className="h-5 w-5 animate-spin text-paper-dim" />
-        <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-paper-dim">Analyzing schema…</span>
+      <div className="overflow-hidden rounded-xs border border-ink-500 bg-ink-100">
+        <table className="w-full">
+          <tbody>
+            <SkeletonRows count={6} cols={4} />
+          </tbody>
+        </table>
       </div>
     );
   }

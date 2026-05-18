@@ -37,6 +37,7 @@ import { useWorkspaceStore, genTabId } from "@/stores/workspace";
 import { useRbacStore } from "@/stores/rbac";
 import { cn, formatCompactNumber } from "@/lib/utils";
 import UploadFromFile from "@/features/explorer/components/UploadFile";
+import { Skeleton } from "@/components/ui/skeleton";
 
 // ============================================
 // Helpers (unchanged from previous version)
@@ -304,11 +305,11 @@ export default function HomePage() {
   const { tabs, setActiveTab, addTab } = useWorkspaceStore();
   const { user: rbacUser } = useRbacStore();
 
-  const { data: stats } = useSystemStats();
+  const { data: stats, isLoading: isStatsLoading } = useSystemStats();
   const { data: databaseList = [] } = useDatabases();
   const usernameFilter = isAdmin ? undefined : username || undefined;
-  const { data: recentQueries = [] } = useRecentQueries(10, usernameFilter);
-  const { data: savedQueries = [] } = useSavedQueries(activeConnectionId || undefined);
+  const { data: recentQueries = [], isLoading: isRecentLoading } = useRecentQueries(10, usernameFilter);
+  const { data: savedQueries = [], isLoading: isSavedLoading } = useSavedQueries(activeConnectionId || undefined);
 
   const filteredSavedQueries = useMemo(
     () => savedQueries.filter((sq) => sq.connectionId === activeConnectionId),
@@ -488,9 +489,18 @@ export default function HomePage() {
         </header>
 
         {/* ─── Stats ─── */}
-        {stats && (
-          <section className="mt-10 flex flex-col gap-5" aria-label="Cluster metrics">
-            <SectionHeader eyebrowIndex={1} eyebrow="Cluster" />
+        <section className="mt-10 flex flex-col gap-5" aria-label="Cluster metrics">
+          <SectionHeader eyebrowIndex={1} eyebrow="Cluster" />
+          {isStatsLoading && !stats ? (
+            <div className="grid grid-cols-2 border-l border-t border-ink-500 sm:grid-cols-3 lg:grid-cols-6">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="border-b border-r border-ink-500 p-4">
+                  <Skeleton className="h-2.5 w-20" />
+                  <Skeleton className="mt-3 h-6 w-16" />
+                </div>
+              ))}
+            </div>
+          ) : stats ? (
             <div className="grid grid-cols-2 border-l border-t border-ink-500 sm:grid-cols-3 lg:grid-cols-6">
               <MetricCell icon={Database} label="Databases" value={stats.databaseCount} />
               <MetricCell icon={Table2} label="Tables" value={stats.tableCount} />
@@ -503,8 +513,8 @@ export default function HomePage() {
               <MetricCell icon={Users} label="Connections" value={stats.activeConnections} />
               <MetricCell icon={Zap} label="Active queries" value={stats.activeQueries} />
             </div>
-          </section>
-        )}
+          ) : null}
+        </section>
 
         {/* ─── Quick actions ─── */}
         <section className="mt-12 flex flex-col gap-5" aria-label="Quick actions">
@@ -655,7 +665,20 @@ export default function HomePage() {
               )}
             </div>
             <div className="flex-1 overflow-y-auto">
-              {filteredSavedQueries.length === 0 ? (
+              {isSavedLoading && filteredSavedQueries.length === 0 ? (
+                <div className="flex flex-col">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="flex items-center gap-3 border-b border-ink-500 px-4 py-3">
+                      <Skeleton className="h-3.5 w-3.5" />
+                      <div className="flex-1 space-y-1.5">
+                        <Skeleton className="h-3 w-32" />
+                        <Skeleton className="h-2.5 w-48" />
+                      </div>
+                      <Skeleton className="h-3.5 w-3.5" />
+                    </div>
+                  ))}
+                </div>
+              ) : filteredSavedQueries.length === 0 ? (
                 <EmptyState
                   message="Save your frequently used queries for quick access."
                   actionLabel="Create query"
@@ -697,7 +720,21 @@ export default function HomePage() {
               ) : undefined
             }
           />
-          {recentQueries.length === 0 ? (
+          {isRecentLoading && recentQueries.length === 0 ? (
+            <div className="grid grid-cols-1 border-l border-t border-ink-500 md:grid-cols-2 lg:grid-cols-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="flex flex-col gap-2 border-b border-r border-ink-500 px-4 py-4">
+                  <div className="flex items-center justify-between">
+                    <Skeleton className="h-3 w-16" />
+                    <Skeleton className="h-3 w-12" />
+                  </div>
+                  <Skeleton className="h-3.5 w-full" />
+                  <Skeleton className="h-3.5 w-3/4" />
+                  <Skeleton className="h-3 w-10" />
+                </div>
+              ))}
+            </div>
+          ) : recentQueries.length === 0 ? (
             <EditorialCard>
               <EmptyState
                 message="Your query history will appear here."
