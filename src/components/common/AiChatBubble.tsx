@@ -1924,8 +1924,8 @@ export default function AiChatBubble() {
                                                         </div>
                                                         {
                                                             msg.role === 'user' && (
-                                                                <div className="w-7 h-7 rounded-xl bg-gradient-to-br from-indigo-500/20 to-blue-500/20 flex items-center justify-center flex-shrink-0 mt-0.5 ring-1 ring-white/[0.06]">
-                                                                    <User className="w-3.5 h-3.5 text-indigo-400" />
+                                                                <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-xs border border-ink-500 bg-ink-200">
+                                                                    <User className="h-3.5 w-3.5 text-paper-muted" aria-hidden />
                                                                 </div>
                                                             )
                                                         }
@@ -1939,10 +1939,10 @@ export default function AiChatBubble() {
                                         )}
                                     </div>
 
-                                    {/* Input Area */}
+                                    {/* Input area */}
                                     {activeThreadId && (
-                                        <div className={`relative z-10 flex-shrink-0 px-5 border-t border-white/[0.06] bg-black/40 backdrop-blur-sm ${isMobile ? 'pt-3 pb-6' : 'py-3'}`}>
-                                            <form onSubmit={handleSend} className="flex items-end gap-3">
+                                        <div className={`relative z-10 flex-shrink-0 border-t border-ink-500 bg-ink-200 px-4 ${isMobile ? 'pt-3 pb-6' : 'py-3'}`}>
+                                            <form onSubmit={handleSend} className="flex items-end gap-2">
                                                 <textarea
                                                     ref={inputRef}
                                                     value={input}
@@ -1951,12 +1951,11 @@ export default function AiChatBubble() {
                                                     placeholder="Ask about your databases, schemas, queries…"
                                                     disabled={isStreaming}
                                                     rows={1}
-                                                    className="flex-1 resize-none rounded-xl px-4 py-3 text-sm
-                                             bg-white/[0.05] border border-white/[0.08] text-zinc-100
-                                             placeholder:text-zinc-600
-                                             focus:outline-none focus:border-violet-500/30 focus:ring-2 focus:ring-violet-500/10
-                                             disabled:opacity-40 transition-all duration-200
-                                             max-h-[120px] min-h-[44px]"
+                                                    className="flex-1 resize-none rounded-xs border border-ink-500 bg-ink-100 px-3 py-2.5
+                                                               font-mono text-[12.5px] text-paper placeholder:text-paper-faint
+                                                               focus:border-brand focus:outline-none focus:ring-0
+                                                               disabled:opacity-40 transition-colors
+                                                               max-h-[120px] min-h-[44px]"
                                                     style={{ height: 'auto' }}
                                                     onInput={(e) => {
                                                         const target = e.target as HTMLTextAreaElement;
@@ -1968,34 +1967,31 @@ export default function AiChatBubble() {
                                                     <button
                                                         type="button"
                                                         onClick={handleStop}
-                                                        className="p-3 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/15
-                                                 text-red-400 transition-all duration-200 flex-shrink-0"
+                                                        className="grid h-11 w-11 shrink-0 place-items-center rounded-xs border border-red-900/60 bg-red-950/40 text-red-300 transition-colors hover:border-red-700 hover:bg-red-900/50"
                                                         title="Stop generating"
                                                         aria-label="Stop generating"
                                                     >
-                                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                                        <Loader2 className="h-4 w-4 animate-spin" />
                                                     </button>
                                                 ) : (
                                                     <button
                                                         type="submit"
                                                         disabled={!input.trim()}
-                                                        className="p-3 rounded-xl
-                                                 bg-gradient-to-r from-violet-500 to-indigo-600
-                                                 hover:from-violet-400 hover:to-indigo-500
-                                                 disabled:from-white/[0.04] disabled:to-white/[0.04] disabled:text-zinc-600
-                                                 text-white transition-all duration-300 flex-shrink-0
-                                                 shadow-lg shadow-violet-500/20 disabled:shadow-none"
+                                                        className="grid h-11 w-11 shrink-0 place-items-center rounded-xs bg-brand text-ink-50 transition-[transform,background-color] duration-200 hover:bg-brand-soft hover:-translate-y-px disabled:bg-ink-300 disabled:text-paper-faint disabled:translate-y-0"
                                                         title="Send message"
+                                                        aria-label="Send"
                                                     >
-                                                        <Send className="w-4 h-4" />
+                                                        <Send className="h-4 w-4" />
                                                     </button>
                                                 )}
                                             </form>
-                                            <div className="flex items-center justify-between mt-1.5 px-1">
-                                                <span className="text-[10px] text-zinc-700">Shift+Enter for new line · Esc to close</span>
+                                            <div className="mt-2 flex items-center justify-between px-1">
+                                                <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">
+                                                    Shift+Enter newline · Esc close
+                                                </span>
                                                 {isStreaming && toolStatus && (
-                                                    <span className="text-[10px] text-violet-400/60 flex items-center gap-1">
-                                                        <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                                    <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-muted">
+                                                        <Loader2 className="h-2.5 w-2.5 animate-spin" />
                                                         {toolStatus}
                                                     </span>
                                                 )}
