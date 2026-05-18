@@ -61,33 +61,58 @@ import type { LiveQuery } from '@/api/live-queries';
 // Helper Functions
 // ============================================
 
-function formatBytes(bytes: number): string {
-    if (bytes === 0) return '0 B';
+// Coerce ClickHouse JSON values (UInt64 often arrives as a string) into a
+// finite number. Returns null when the value is unusable so callers can fall
+// back to a placeholder instead of rendering "NaN" or "undefined".
+function toFiniteNumber(input: unknown): number | null {
+    const n = typeof input === 'number' ? input : Number(input);
+    return Number.isFinite(n) ? n : null;
+}
+
+// Format a number to 2 decimals without ever switching to scientific notation
+// for the typical UI range, but cleanly degrade to compact exponential when the
+// upstream value is so large it'd otherwise overflow the layout.
+function fixed2(n: number): string {
+    const abs = Math.abs(n);
+    if (abs >= 1e15) {
+        // Numbers this large in the post-tiering result usually mean upstream
+        // data is bogus (sums overflowing UInt64, etc). Keep the cell short.
+        return n.toExponential(2);
+    }
+    return n.toFixed(2);
+}
+
+function formatBytes(bytes: unknown): string {
+    const n = toFiniteNumber(bytes);
+    if (n === null) return '—';
+    if (n === 0) return '0 B';
+    const sign = n < 0 ? '-' : '';
+    const abs = Math.abs(n);
     const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+    const i = Math.min(sizes.length - 1, Math.max(0, Math.floor(Math.log(abs) / Math.log(k))));
+    return `${sign}${fixed2(abs / Math.pow(k, i))} ${sizes[i]}`;
 }
 
-function formatNumber(num: number): string {
-    if (num >= 1_000_000_000) {
-        return `${(num / 1_000_000_000).toFixed(2)}B`;
-    }
-    if (num >= 1_000_000) {
-        return `${(num / 1_000_000).toFixed(2)}M`;
-    }
-    if (num >= 1_000) {
-        return `${(num / 1_000).toFixed(2)}K`;
-    }
-    return num.toString();
+function formatNumber(num: unknown): string {
+    const n = toFiniteNumber(num);
+    if (n === null) return '—';
+    const sign = n < 0 ? '-' : '';
+    const abs = Math.abs(n);
+    if (abs >= 1_000_000_000_000_000) return `${sign}${fixed2(abs / 1_000_000_000_000_000)}Q`;
+    if (abs >= 1_000_000_000_000) return `${sign}${fixed2(abs / 1_000_000_000_000)}T`;
+    if (abs >= 1_000_000_000) return `${sign}${fixed2(abs / 1_000_000_000)}B`;
+    if (abs >= 1_000_000) return `${sign}${fixed2(abs / 1_000_000)}M`;
+    if (abs >= 1_000) return `${sign}${fixed2(abs / 1_000)}K`;
+    return `${sign}${fixed2(abs)}`;
 }
 
-function formatDuration(seconds: number): string {
-    if (seconds < 60) {
-        return `${seconds.toFixed(1)}s`;
-    }
-    const mins = Math.floor(seconds / 60);
-    const secs = (seconds % 60).toFixed(0);
+function formatDuration(seconds: unknown): string {
+    const n = toFiniteNumber(seconds);
+    if (n === null) return '—';
+    if (n < 60) return `${fixed2(n)}s`;
+    const mins = Math.floor(n / 60);
+    const secs = fixed2(n % 60);
     return `${mins}m ${secs}s`;
 }
 
