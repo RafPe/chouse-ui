@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Loader2, AlertCircle, Sparkles } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
@@ -387,12 +387,10 @@ const ExplainPopout = () => {
                                 className={cn(
                                     "rounded-xs px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.14em] transition-colors",
                                     "data-[state=active]:bg-ink-200 data-[state=active]:text-paper",
-                                    "data-[state=inactive]:text-paper-dim hover:text-paper",
-                                    key === 'analysis' && "flex items-center gap-1.5"
+                                    "data-[state=inactive]:text-paper-dim hover:text-paper"
                                 )}
                                 title={description}
                             >
-                                {key === 'analysis' && <Sparkles className="h-3 w-3" />}
                                 {label}
                             </TabsTrigger>
                         ))}
