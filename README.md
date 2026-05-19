@@ -73,18 +73,32 @@ CHouse UI provides security and access control features for teams that need:
 - **File Upload** - Upload CSV, TSV, or JSON files to existing tables
 - **Data Preview** - Sample data with pagination
 
-### 📊 Query & Analytics
-- **SQL Editor** - Monaco editor with syntax highlighting and auto-completion
-- **Query Execution** - Run queries with execution statistics
-- **Query History** - View and filter query logs with auto-refresh
-- **Saved Queries** - Persist frequently used queries
+### 📊 Query Workspace
+- **SQL Editor** - Monaco editor with syntax highlighting, auto-completion, and Visual EXPLAIN
+- **Query Execution** - Run queries with per-query execution statistics
+- **Saved Queries** - Persist frequently used queries, organize by connection
 - **Data Export** - CSV, JSON, TSV formats
-- **Real-time Metrics** - System monitoring dashboard with charts
+- **AI Assist** - Optimizer / Debugger / Chat with schema-aware context (provider-pluggable: OpenAI, Anthropic, Google, etc.)
 - **Overview Dashboard** - System stats, recent queries, and quick actions (admin only)
 
+### 🔬 Monitoring & Observability
+- **Query logs** with four sub-views over `system.query_log`:
+  - **Queries** — every execution as a dense table with sortable columns, SQL-keyword tooltip preview, memory-pressure flag (Flame ≥ 25 % / AlertTriangle ≥ 10 % cluster RAM), row checkboxes for side-by-side **Compare**, expanded-row drill-downs for **Profile events** and **Views triggered** (`system.query_views_log`)
+  - **Patterns** — `normalizeQuery()` rollup with cumulative cost (Runs / Avg dur / **Total dur** / Max mem / Read rows / Read bytes), default sort Total dur DESC — finds the patterns hogging the most wall-clock time across all repetitions
+  - **By table** — `arrayJoin(tables)` per-table rollup with `arrayFilter` push-down so busy clusters return in ~1 s
+  - **Histogram** — distribution of duration / memory / read rows / read bytes across the active window
+- **Query timeline chart** — stacked bar / stacked area / line variants, per `query_kind`
+- **Custom time range** — 15 m / 1 h / 6 h / 24 h presets unified with a 2-month range calendar in one popover
+- **Parts** — `system.part_log` stacked area chart of merges, mutations, downloads, removals + paginated event table
+- **Schema doctor** — Nullable column + oversized integer linter over `system.parts_columns`, ranked by on-disk bytes
+- **Cluster activity** — `system.mutations` + `system.replication_queue` with status chips and auto-refresh
+- **Live queries** — running queries with kill support
+- **Metrics** — 7 sub-tabs (Overview / Performance / Storage / Merges / Errors / System / Network)
+
 ### 🎨 User Experience
-- **Modern UI** - Glassmorphism design with dark theme
-- **Responsive** - Works on desktop and tablet
+- **Editorial design system** — dark monochrome canvas with ClickHouse-yellow accent, Geist Sans + Geist Mono typography, hairline borders. Light theme on the roadmap (phase 3)
+- **Command palette** — ⌘/Ctrl+K opens RBAC-gated quick switcher (recent queries, pages, databases, tables, saved queries, actions, help)
+- **Responsive** — Works on desktop and tablet
 - **Connection Selector** - Quick server switching
 - **Keyboard Shortcuts** - Power user support
 
@@ -528,7 +542,9 @@ This project was initially based on **[CH-UI](https://github.com/caioricciuti/ch
 
 ### Special Thanks
 
-**[CH-UI](https://github.com/caioricciuti/ch-ui)** by [Caio Ricciuti](https://github.com/caioricciuti) - This project was inspired by CH-UI's design and user experience.
+**[CH-UI](https://github.com/caioricciuti/ch-ui)** by [Caio Ricciuti](https://github.com/caioricciuti) — This project was inspired by CH-UI's design and user experience.
+
+**[QueryDog](https://github.com/benjaminwootton/QueryDog)** by [Benjamin Wootton](https://benjaminwootton.com) (Elastic License 2.0) — The Monitoring deep-dive (Logs sub-views Queries / Patterns / By table / Histogram, Parts, Schema doctor, Cluster activity, and the Query timeline chart) is heavily inspired by QueryDog's chart-plus-table layout and aggregation patterns over ClickHouse system tables. No QueryDog source code is bundled here; every component was rewritten on top of React 19 + shadcn/ui + recharts + the editorial design system. Full attribution and the list of adapted ideas is in [NOTICE](./NOTICE).
 
 ### Built With
 
