@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
+  Flame,
   Zap,
   User,
   Shield,
@@ -31,6 +32,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { useQueryLogs, usePaginationPreference, useLogsPreferences } from "@/hooks";
+import { useClusterMemoryTotal } from "@/hooks/useMonitoringTimeline";
 import { useRbacStore, RBAC_PERMISSIONS } from "@/stores";
 import { cn } from "@/lib/utils";
 import { DataControls } from "@/components/common/DataControls";
@@ -313,6 +315,9 @@ export default function LogsPage({
   const [currentPage, setCurrentPage] = useState(0);
   const [sortKey, setSortKey] = useState<SortKey>("event_time");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  // Cluster RAM, used downstream to flag queries that ate > 40% of it.
+  const { data: clusterMemoryBytes = 0 } = useClusterMemoryTotal();
 
   const customRangeActive = !!(customRange?.from && customRange?.to);
   const customRangeSql = customRangeActive
@@ -805,6 +810,7 @@ export default function LogsPage({
                 sortKey={sortKey}
                 sortDir={sortDir}
                 onSort={toggleSort}
+                clusterMemoryBytes={clusterMemoryBytes}
               />
             )}
           </div>
@@ -906,9 +912,32 @@ interface LogsTableProps {
   sortKey: SortKey;
   sortDir: "asc" | "desc";
   onSort: (key: SortKey) => void;
+  /** Total cluster RAM in bytes; used to flag memory-heavy queries. 0 disables. */
+  clusterMemoryBytes: number;
 }
 
-function LogsTable({ rows, expanded, onToggle, isFailed, sortKey, sortDir, onSort }: LogsTableProps) {
+/** Memory pressure tiers as fraction of total cluster RAM. */
+const MEM_TIER_WARN = 0.4;
+const MEM_TIER_DANGER = 0.6;
+
+function memoryTier(usage: number, total: number): "ok" | "warn" | "danger" {
+  if (total <= 0 || usage <= 0) return "ok";
+  const ratio = usage / total;
+  if (ratio >= MEM_TIER_DANGER) return "danger";
+  if (ratio >= MEM_TIER_WARN) return "warn";
+  return "ok";
+}
+
+function LogsTable({
+  rows,
+  expanded,
+  onToggle,
+  isFailed,
+  sortKey,
+  sortDir,
+  onSort,
+  clusterMemoryBytes,
+}: LogsTableProps) {
   return (
     <TooltipProvider delayDuration={300}>
     <table className="w-full text-[12px]">
@@ -964,6 +993,7 @@ function LogsTable({ rows, expanded, onToggle, isFailed, sortKey, sortDir, onSor
             isExpanded={expanded === log.query_id}
             onToggle={() => onToggle(log.query_id)}
             failed={isFailed(log)}
+            clusterMemoryBytes={clusterMemoryBytes}
           />
         ))}
       </tbody>
@@ -977,9 +1007,13 @@ interface LogRowProps {
   isExpanded: boolean;
   onToggle: () => void;
   failed: boolean;
+  clusterMemoryBytes: number;
 }
 
-function LogRow({ log, isExpanded, onToggle, failed }: LogRowProps) {
+function LogRow({ log, isExpanded, onToggle, failed, clusterMemoryBytes }: LogRowProps) {
+  const memTier = memoryTier(log.memory_usage, clusterMemoryBytes);
+  const memRatioPct =
+    clusterMemoryBytes > 0 ? (log.memory_usage / clusterMemoryBytes) * 100 : 0;
   const isFinish = log.type === "QueryFinish";
   const StatusIcon = isFinish ? CheckCircle2 : failed ? XCircle : Zap;
   const statusColor = isFinish
@@ -1050,8 +1084,12 @@ function LogRow({ log, isExpanded, onToggle, failed }: LogRowProps) {
         <td className="px-3 py-1.5 text-right font-mono text-paper-muted">
           {formatBytes(log.read_bytes)}
         </td>
-        <td className="px-3 py-1.5 text-right font-mono text-paper-muted">
-          {formatBytes(log.memory_usage)}
+        <td className="px-3 py-1.5 text-right font-mono">
+          <MemoryCell
+            bytes={log.memory_usage}
+            tier={memTier}
+            ratioPct={memRatioPct}
+          />
         </td>
         <td
           className="px-3 py-1.5 font-mono text-paper-faint truncate"
@@ -1156,6 +1194,50 @@ function LogDetail({ log, failed, onClose }: LogDetailProps) {
         <MetaCell label="Event time" value={`${log.event_date} ${log.event_time}`} />
       </div>
     </div>
+  );
+}
+
+interface MemoryCellProps {
+  bytes: number;
+  tier: "ok" | "warn" | "danger";
+  ratioPct: number;
+}
+
+/**
+ * Memory cell with a pressure flag. > 40% cluster RAM goes amber + warning
+ * icon (worth a look); > 60% goes red + flame (likely needs tuning). Below
+ * threshold it renders exactly like the other byte cells so the editorial
+ * baseline doesn't get noisy.
+ */
+function MemoryCell({ bytes, tier, ratioPct }: MemoryCellProps) {
+  if (tier === "ok") {
+    return <span className="text-paper-muted">{formatBytes(bytes)}</span>;
+  }
+  const Icon = tier === "danger" ? Flame : AlertTriangle;
+  const tone =
+    tier === "danger"
+      ? "text-red-300"
+      : "text-amber-300";
+  const label =
+    tier === "danger"
+      ? `Used ${ratioPct.toFixed(0)}% of cluster RAM — likely needs optimization.`
+      : `Used ${ratioPct.toFixed(0)}% of cluster RAM — worth reviewing.`;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={cn("inline-flex items-center justify-end gap-1.5", tone)}>
+          <Icon className="h-3 w-3" aria-hidden />
+          <span>{formatBytes(bytes)}</span>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent
+        side="left"
+        sideOffset={6}
+        className="rounded-xs border border-ink-700 bg-ink-200 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-muted shadow-xl ring-1 ring-black/30"
+      >
+        {label}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

@@ -166,6 +166,29 @@ export function usePartLogTimeline(
   });
 }
 
+/**
+ * Total OS RAM reported by ClickHouse, used to flag memory-heavy queries on
+ * the Logs page. Cached for 5 min; survives connection changes via the key.
+ */
+export function useClusterMemoryTotal(
+  options?: Partial<UseQueryOptions<number, Error>>
+) {
+  const { activeConnectionId } = useAuthStore();
+
+  return useQuery({
+    queryKey: ["clusterMemoryTotal", activeConnectionId] as const,
+    queryFn: async () => {
+      const result = await queryApi.executeQuery(
+        `SELECT value FROM system.asynchronous_metrics WHERE metric = 'OSMemoryTotal' LIMIT 1`
+      );
+      const row = (result.data as Array<{ value: unknown }>)[0];
+      return num(row?.value);
+    },
+    staleTime: 5 * 60 * 1000,
+    ...options,
+  });
+}
+
 export interface PartLogEntry {
   event_time: string;
   event_type: string;
