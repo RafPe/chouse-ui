@@ -306,9 +306,14 @@ export function useQueryByTable(
       activeConnectionId,
     ] as const,
     queryFn: async () => {
+      // Filter system schemas INSIDE the arrayFilter so the subsequent
+      // arrayJoin amplifies way fewer rows on busy clusters — 100K+ query_log
+      // rows × 5 system tables touched each = half a million extra rows
+      // exploded if we post-filter. The outer `length(user_tables) > 0` drops
+      // queries that only touched metadata so they don't take up read budget.
       const sql = `
         SELECT
-          table_qualified,
+          arrayJoin(user_tables) AS table_qualified,
           count() AS queries,
           countIf(query_kind = 'Select') AS selects,
           countIf(query_kind IN ('Insert', 'AsyncInsertFlush')) AS inserts,
@@ -320,7 +325,14 @@ export function useQueryByTable(
           max(memory_usage) AS max_memory
         FROM (
           SELECT
-            arrayJoin(tables) AS table_qualified,
+            arrayFilter(
+              t ->
+                t NOT LIKE 'system.%'
+                AND t NOT LIKE 'INFORMATION_SCHEMA.%'
+                AND t NOT LIKE 'information_schema.%'
+                AND t != '',
+              tables
+            ) AS user_tables,
             query_kind,
             query_duration_ms,
             read_rows,
@@ -332,10 +344,7 @@ export function useQueryByTable(
             AND type IN ('QueryFinish', 'ExceptionWhileProcessing', 'ExceptionBeforeStart')
             AND length(tables) > 0
         )
-        WHERE table_qualified NOT LIKE 'system.%'
-          AND table_qualified NOT LIKE 'INFORMATION_SCHEMA.%'
-          AND table_qualified NOT LIKE 'information_schema.%'
-          AND table_qualified != ''
+        WHERE length(user_tables) > 0
         GROUP BY table_qualified
         ORDER BY ${sortBy} DESC
         LIMIT ${limit}
