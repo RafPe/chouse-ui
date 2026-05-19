@@ -16,6 +16,9 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -251,6 +254,17 @@ export default function LogsPage({
   const [timeRangeHours, setTimeRangeHours] = useState<number>(6);
   const [expandedLog, setExpandedLog] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
+  const [sortKey, setSortKey] = useState<SortKey>("event_time");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const toggleSort = (key: SortKey) => {
+    if (key === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir(key === "query" || key === "user" || key === "query_id" ? "asc" : "desc");
+    }
+  };
 
   const bucket = bucketFor(timeRangeHours);
 
@@ -355,14 +369,19 @@ export default function LogsPage({
   const filteredLogs = processed.logs;
   const exceptionQueryIds = processed.exceptionQueryIds;
 
-  const totalRows = filteredLogs.length;
+  const sortedLogs = useMemo(
+    () => sortLogs(filteredLogs, sortKey, sortDir),
+    [filteredLogs, sortKey, sortDir]
+  );
+
+  const totalRows = sortedLogs.length;
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
   const safePage = Math.min(currentPage, totalPages - 1);
   const startIndex = safePage * pageSize;
   const endIndex = Math.min(startIndex + pageSize, totalRows);
   const paginatedRows = useMemo(
-    () => filteredLogs.slice(startIndex, endIndex),
-    [filteredLogs, startIndex, endIndex]
+    () => sortedLogs.slice(startIndex, endIndex),
+    [sortedLogs, startIndex, endIndex]
   );
 
   // Reset to the first page when the filter set, time range, or page size changes.
@@ -589,9 +608,11 @@ export default function LogsPage({
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden rounded-md border border-ink-500 bg-ink-100">
           <div className="flex-1 overflow-auto">
             {isLoading ? (
-              <div className="p-4">
-                <SkeletonRows count={10} cols={7} />
-              </div>
+              <table className="w-full">
+                <tbody>
+                  <SkeletonRows count={10} cols={9} />
+                </tbody>
+              </table>
             ) : totalRows === 0 ? (
               <div className="flex h-64 flex-col items-center justify-center gap-2 px-4 text-center">
                 <span className="grid h-12 w-12 place-items-center rounded-xs border border-ink-500 bg-ink-200 text-paper-dim">
@@ -610,6 +631,9 @@ export default function LogsPage({
                 expanded={expandedLog}
                 onToggle={(id) => setExpandedLog((cur) => (cur === id ? null : id))}
                 isFailed={isFailedLog}
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
               />
             )}
           </div>
@@ -720,42 +744,126 @@ function PageBtn({
    Compact logs table — QueryDog-style dense layout
    ============================================================ */
 
+type SortKey =
+  | "event_time"
+  | "type"
+  | "query"
+  | "user"
+  | "query_duration_ms"
+  | "read_rows"
+  | "read_bytes"
+  | "memory_usage"
+  | "query_id";
+
+interface ColumnSpec {
+  key: SortKey | null;
+  label: string;
+  align: "left" | "right";
+  w?: string;
+}
+
+const COLUMNS: ColumnSpec[] = [
+  { key: "event_time", label: "Time", align: "left", w: "w-[88px]" },
+  { key: "type", label: "", align: "left", w: "w-[28px]" },
+  { key: "query", label: "Query", align: "left" },
+  { key: "user", label: "User", align: "left", w: "w-[140px]" },
+  { key: "query_duration_ms", label: "Duration", align: "right", w: "w-[88px]" },
+  { key: "read_rows", label: "Read rows", align: "right", w: "w-[96px]" },
+  { key: "read_bytes", label: "Read bytes", align: "right", w: "w-[96px]" },
+  { key: "memory_usage", label: "Memory", align: "right", w: "w-[96px]" },
+  { key: "query_id", label: "Query ID", align: "left", w: "w-[110px]" },
+];
+
+function sortLogs(rows: LogEntry[], key: SortKey, dir: "asc" | "desc"): LogEntry[] {
+  const mult = dir === "asc" ? 1 : -1;
+  const cmp = (a: LogEntry, b: LogEntry): number => {
+    switch (key) {
+      case "event_time": {
+        const dateCmp = a.event_date.localeCompare(b.event_date);
+        if (dateCmp !== 0) return mult * dateCmp;
+        return mult * a.event_time.localeCompare(b.event_time);
+      }
+      case "query_duration_ms":
+        return mult * (a.query_duration_ms - b.query_duration_ms);
+      case "read_rows":
+        return mult * (a.read_rows - b.read_rows);
+      case "read_bytes":
+        return mult * (a.read_bytes - b.read_bytes);
+      case "memory_usage":
+        return mult * (a.memory_usage - b.memory_usage);
+      case "query":
+        return mult * (a.query || "").localeCompare(b.query || "");
+      case "user": {
+        const au = a.rbacUser || a.user || "";
+        const bu = b.rbacUser || b.user || "";
+        return mult * au.localeCompare(bu);
+      }
+      case "type":
+        return mult * (a.type || "").localeCompare(b.type || "");
+      case "query_id":
+        return mult * (a.query_id || "").localeCompare(b.query_id || "");
+      default:
+        return 0;
+    }
+  };
+  return [...rows].sort(cmp);
+}
+
 interface LogsTableProps {
   rows: LogEntry[];
   expanded: string | null;
   onToggle: (id: string) => void;
   isFailed: (log: LogEntry) => boolean;
+  sortKey: SortKey;
+  sortDir: "asc" | "desc";
+  onSort: (key: SortKey) => void;
 }
 
-const COLUMN_HEADERS = [
-  { label: "Time", align: "left" as const, w: "w-[88px]" },
-  { label: "", align: "left" as const, w: "w-[28px]" },
-  { label: "Query", align: "left" as const },
-  { label: "User", align: "left" as const, w: "w-[140px]" },
-  { label: "Duration", align: "right" as const, w: "w-[88px]" },
-  { label: "Read rows", align: "right" as const, w: "w-[96px]" },
-  { label: "Read bytes", align: "right" as const, w: "w-[96px]" },
-  { label: "Memory", align: "right" as const, w: "w-[96px]" },
-  { label: "Query ID", align: "left" as const, w: "w-[110px]" },
-];
-
-function LogsTable({ rows, expanded, onToggle, isFailed }: LogsTableProps) {
+function LogsTable({ rows, expanded, onToggle, isFailed, sortKey, sortDir, onSort }: LogsTableProps) {
   return (
     <table className="w-full text-[12px]">
       <thead className="sticky top-0 z-10 bg-ink-200/90 backdrop-blur">
         <tr className="border-b border-ink-500">
-          {COLUMN_HEADERS.map((h, i) => (
-            <th
-              key={`${h.label}-${i}`}
-              className={cn(
-                "px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint",
-                h.align === "right" ? "text-right" : "text-left",
-                h.w
-              )}
-            >
-              {h.label}
-            </th>
-          ))}
+          {COLUMNS.map((c, i) => {
+            const isActive = c.key !== null && c.key === sortKey;
+            const sortable = c.key !== null && c.label.length > 0;
+            return (
+              <th
+                key={`${c.label}-${i}`}
+                className={cn(
+                  "px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint",
+                  c.align === "right" ? "text-right" : "text-left",
+                  c.w
+                )}
+              >
+                {sortable ? (
+                  <button
+                    type="button"
+                    onClick={() => onSort(c.key as SortKey)}
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-xs transition-colors hover:text-paper",
+                      c.align === "right" && "flex-row-reverse",
+                      isActive && "text-brand"
+                    )}
+                    aria-label={`Sort by ${c.label}`}
+                  >
+                    <span>{c.label}</span>
+                    {isActive ? (
+                      sortDir === "asc" ? (
+                        <ArrowUp className="h-3 w-3" aria-hidden />
+                      ) : (
+                        <ArrowDown className="h-3 w-3" aria-hidden />
+                      )
+                    ) : (
+                      <ArrowUpDown className="h-2.5 w-2.5 opacity-40" aria-hidden />
+                    )}
+                  </button>
+                ) : (
+                  c.label
+                )}
+              </th>
+            );
+          })}
         </tr>
       </thead>
       <tbody>
@@ -840,7 +948,7 @@ function LogRow({ log, isExpanded, onToggle, failed }: LogRowProps) {
 
       {isExpanded && (
         <tr className="bg-ink-200/40">
-          <td colSpan={COLUMN_HEADERS.length} className="p-4">
+          <td colSpan={COLUMNS.length} className="p-4">
             <LogDetail log={log} failed={failed} onClose={onToggle} />
           </td>
         </tr>

@@ -152,9 +152,11 @@ export default function PartsPage({
         <div className="flex-1 min-h-0 overflow-hidden rounded-md border border-ink-500 bg-ink-100">
           <div className="h-full overflow-auto">
             {isLoading ? (
-              <div className="p-4">
-                <SkeletonRows count={8} cols={6} />
-              </div>
+              <table className="w-full">
+                <tbody>
+                  <SkeletonRows count={8} cols={9} />
+                </tbody>
+              </table>
             ) : error ? (
               <div className="flex h-64 flex-col items-center justify-center gap-1 px-4 text-center">
                 <span className="text-[13px] text-paper">Couldn't load part_log</span>
