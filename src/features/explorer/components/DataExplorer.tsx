@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Skeleton } from "@/components/ui/skeleton";
+import { SkeletonTree } from "@/components/common/Skeletons";
 import {
   RefreshCcw,
   Search,
@@ -534,11 +534,7 @@ const DatabaseExplorer: React.FC = () => {
 
               {/* Database Tree */}
               {isLoadingDatabase ? (
-                <div className="space-y-2 p-2">
-                  {[...Array(5)].map((_, i) => (
-                    <Skeleton key={i} className="h-7 rounded-xs bg-ink-200" />
-                  ))}
-                </div>
+                <SkeletonTree count={6} />
               ) : filteredData.length > 0 ? (
                 <div className="space-y-0.5">
                   {filteredData.map((db) => (

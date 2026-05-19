@@ -96,6 +96,7 @@ import { getSessionId } from '@/api/client';
 import { getDatabases, type DatabaseInfo } from '@/api/explorer';
 import { useRbacStore, useAuthStore, RBAC_PERMISSIONS } from '@/stores';
 import { cn } from '@/lib/utils';
+import { SkeletonRows } from '@/components/common/Skeletons';
 
 // ============================================
 // User Form Dialog Component
@@ -1717,16 +1718,16 @@ export default function ClickHouseUsersManagement() {
           <div className="rounded-xs border border-ink-500 bg-ink-100 p-8 text-center">
             <Database className="mx-auto mb-4 h-10 w-10 text-paper-faint" aria-hidden />
             <h3 className="mb-2 text-[16px] font-semibold tracking-tight text-paper">
-              No active ClickHouse connection
+              Not connected
             </h3>
             <p className="mb-6 text-[12px] text-paper-muted">
-              You need to connect to a ClickHouse server before managing users. Please select a connection from the sidebar to get started.
+              Pick a ClickHouse server from the dock — managing CH-side users needs an open session.
             </p>
             <div className="flex flex-col items-center gap-3">
               <div className="space-y-1 font-mono text-[11px] uppercase tracking-[0.14em] text-paper-faint">
-                <p>01 — Select a ClickHouse connection from the sidebar</p>
-                <p>02 — Click "Connect" to establish a session</p>
-                <p>03 — Return here to manage ClickHouse users</p>
+                <p>01 — Open the connection dock (left edge)</p>
+                <p>02 — Pick a server, hit Connect</p>
+                <p>03 — Come back — the user list will populate</p>
               </div>
               <Button
                 variant="outline"
@@ -1803,14 +1804,18 @@ export default function ClickHouseUsersManagement() {
 
       {/* Users Table */}
       {isLoading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-paper-dim" />
+        <div className="overflow-hidden rounded-xs border border-ink-500 bg-ink-100">
+          <table className="w-full">
+            <tbody>
+              <SkeletonRows count={5} cols={4} />
+            </tbody>
+          </table>
         </div>
       ) : users.length === 0 ? (
         <div className="rounded-xs border border-ink-500 bg-ink-100 px-6 py-12 text-center">
           <Users className="mx-auto mb-4 h-8 w-8 text-paper-faint" aria-hidden />
-          <h3 className="font-mono text-[11px] uppercase tracking-[0.18em] text-paper-dim">No ClickHouse users found</h3>
-          <p className="mt-2 text-[12px] text-paper-muted">Create your first ClickHouse user to get started.</p>
+          <h3 className="font-mono text-[11px] uppercase tracking-[0.18em] text-paper-dim">No ClickHouse users yet</h3>
+          <p className="mt-2 text-[12px] text-paper-muted">Provision a user with database-scoped grants — DDL or DML, your call.</p>
           {canCreate && (
             <Button
               size="sm"

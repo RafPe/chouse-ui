@@ -494,15 +494,44 @@ export function useTableSchema(
  * Hook to fetch query logs
  */
 /**
+ * SQL column → sort target mapping. Whitelist keeps the dynamic ORDER BY
+ * safe from injection.
+ */
+const QUERY_LOG_SORT_COLUMNS: Record<string, string> = {
+  event_time: '__table1.event_time',
+  type: 'type',
+  query: 'query',
+  user: 'user',
+  query_duration_ms: 'query_duration_ms',
+  read_rows: 'read_rows',
+  read_bytes: 'read_bytes',
+  memory_usage: 'memory_usage',
+  query_id: 'query_id',
+};
+
+export interface QueryLogRange {
+  start: string;
+  end: string;
+}
+
+/**
  * Hook to fetch query logs
  * @param limit - Number of logs to fetch
  * @param username - Optional ClickHouse username to filter by (legacy, for backward compatibility)
  * @param rbacUserId - Optional RBAC user ID to filter by (for non-super-admin users)
+ * @param hoursBack - Time window when no customRange given (defaults to 24h)
+ * @param sortBy - Column name to sort the SQL fetch by (must match QUERY_LOG_SORT_COLUMNS)
+ * @param sortDir - Sort direction; defaults to DESC
+ * @param customRange - Absolute time window; overrides hoursBack when both ends are set
  */
 export function useQueryLogs(
   limit: number = 100,
   username?: string,
   rbacUserId?: string,
+  hoursBack: number = 24,
+  sortBy: string = 'event_time',
+  sortDir: 'asc' | 'desc' = 'desc',
+  customRange?: QueryLogRange,
   options?: Partial<UseQueryOptions<Array<{
     type: string;
     event_date: string;
@@ -527,30 +556,59 @@ export function useQueryLogs(
   // Build user filter clause (legacy support for ClickHouse username)
   const userFilter = username ? `AND user = '${username}'` : '';
 
+  const orderColumn = QUERY_LOG_SORT_COLUMNS[sortBy] ?? '__table1.event_time';
+  const orderDir = sortDir === 'asc' ? 'ASC' : 'DESC';
+
+  // Custom absolute range overrides the relative hoursBack window.
+  const timeFilter = customRange
+    ? `__table1.event_time >= toDateTime('${customRange.start}') AND __table1.event_time <= toDateTime('${customRange.end}')`
+    : `__table1.event_time >= now() - INTERVAL ${hoursBack} HOUR`;
+  // For custom ranges we extend the partition prune so multi-day windows still
+  // get a tight `event_date >=` bound; the substring extracts YYYY-MM-DD.
+  const datePrune = customRange
+    ? `event_date >= toDate('${customRange.start.substring(0, 10)}')`
+    : `event_date >= today() - 1`;
+
   return useQuery({
-    queryKey: ['queryLogs', limit, username, rbacUserId, activeConnectionId] as const,
+    queryKey: [
+      'queryLogs',
+      limit,
+      username,
+      rbacUserId,
+      hoursBack,
+      sortBy,
+      sortDir,
+      customRange?.start ?? null,
+      customRange?.end ?? null,
+      activeConnectionId,
+    ] as const,
     queryFn: async () => {
-      // Fetch query logs
+      // event_date >= today() - 1 keeps partition pruning for the common 24h window;
+      // event_time provides sub-day precision for narrower selections (15m/1h/6h).
+      // substring(query, 1, 2000) caps payload — full query texts can run to
+      // hundreds of KB on ETL workloads and dominate transfer time. type IN
+      // (...) is more selective than `!= 'QueryStart'` for the index.
       const result = await queryApi.executeQuery(`
-          SELECT 
+          SELECT
             type,
             event_date,
             formatDateTime(event_time, '%H:%i:%S') as event_time,
             toUnixTimestamp(__table1.event_time) as event_timestamp,
             query_id,
-            query,
+            substring(query, 1, 2000) as query,
             query_duration_ms,
             read_rows,
             read_bytes,
             memory_usage,
             user,
-            exception,
+            substring(exception, 1, 2000) as exception,
             Settings['log_comment'] as log_comment_json
           FROM system.query_log AS __table1
-          WHERE event_date >= today() - 1
-          AND type != 'QueryStart'
+          WHERE ${datePrune}
+          AND ${timeFilter}
+          AND type IN ('QueryFinish', 'ExceptionWhileProcessing', 'ExceptionBeforeStart')
           ${userFilter}
-          ORDER BY __table1.event_time DESC
+          ORDER BY ${orderColumn} ${orderDir}
           LIMIT ${limit}
         `);
 

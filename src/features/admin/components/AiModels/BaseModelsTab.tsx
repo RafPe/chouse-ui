@@ -18,6 +18,7 @@ import {
     type CreateAiBaseModelInput, type UpdateAiBaseModelInput
 } from '@/api/rbac';
 import { useRbacStore, RBAC_PERMISSIONS } from '@/stores';
+import { SkeletonRows } from '@/components/common/Skeletons';
 
 const baseModelSchema = z.object({
     providerId: z.string().min(1, 'Provider is required'),
@@ -140,7 +141,13 @@ export default function BaseModelsTab() {
             </div>
 
             {isLoading ? (
-                <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-paper-dim" /></div>
+                <div className="overflow-hidden rounded-xs border border-ink-500 bg-ink-100">
+                    <table className="w-full">
+                        <tbody>
+                            <SkeletonRows count={5} cols={4} />
+                        </tbody>
+                    </table>
+                </div>
             ) : models.length === 0 ? (
                 <div className="rounded-xs border border-ink-500 bg-ink-100 px-6 py-12 text-center">
                     <Bot className="mx-auto mb-4 h-8 w-8 text-paper-faint" aria-hidden />

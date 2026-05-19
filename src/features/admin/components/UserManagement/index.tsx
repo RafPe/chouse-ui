@@ -70,6 +70,7 @@ import { toast } from "sonner";
 import { rbacUsersApi, rbacRolesApi, type RbacUser, type RbacRole } from "@/api/rbac";
 import { useRbacStore, RBAC_PERMISSIONS } from "@/stores";
 import { formatDistanceToNow } from "date-fns";
+import { SkeletonCardGrid } from "@/components/common/Skeletons";
 
 // Role display: 2-letter mono code (matches RbacRolesTable / ClickHouseUsers
 // pattern — identity from label, not per-role hue).
@@ -443,11 +444,9 @@ const UserManagement: React.FC = () => {
         </div>
       )}
 
-      {/* Loading State */}
+      {/* Loading State — skeleton card grid */}
       {isLoading && !error && (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="h-6 w-6 animate-spin text-paper-dim" />
-        </div>
+        <SkeletonCardGrid count={6} />
       )}
 
       {/* User Cards */}
@@ -572,12 +571,12 @@ const UserManagement: React.FC = () => {
             <div className="rounded-xs border border-ink-500 bg-ink-100 px-6 py-16 text-center">
               <Users className="mx-auto mb-4 h-8 w-8 text-paper-faint" aria-hidden />
               <h3 className="font-mono text-[11px] uppercase tracking-[0.18em] text-paper-dim">
-                {hasActiveFilters ? "No users found" : "No users configured"}
+                {hasActiveFilters ? "No matches" : "No users yet"}
               </h3>
               <p className="mt-2 text-[12px] text-paper-muted">
                 {hasActiveFilters
-                  ? "Try adjusting your search or filters."
-                  : "Get started by creating your first user."}
+                  ? "Loosen the filters — or clear them to see everyone."
+                  : "Add a user to give someone RBAC-controlled access."}
               </p>
               <div className="mt-4 flex justify-center">
               {hasActiveFilters ? (

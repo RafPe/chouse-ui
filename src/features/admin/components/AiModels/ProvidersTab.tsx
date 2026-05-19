@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { rbacAiProvidersApi, type AiProvider, type CreateAiProviderInput, type UpdateAiProviderInput } from '@/api/rbac';
 import { useRbacStore, RBAC_PERMISSIONS } from '@/stores';
 import { PROVIDER_TYPES, formatProviderType, type ProviderType } from '@/constants/aiProviders';
+import { SkeletonRows } from '@/components/common/Skeletons';
 
 const providerSchema = z.object({
     name: z.string().min(1, 'Name is required').max(255),
@@ -148,7 +149,13 @@ export default function ProvidersTab() {
             </div>
 
             {isLoading ? (
-                <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-paper-dim" /></div>
+                <div className="overflow-hidden rounded-xs border border-ink-500 bg-ink-100">
+                    <table className="w-full">
+                        <tbody>
+                            <SkeletonRows count={5} cols={5} />
+                        </tbody>
+                    </table>
+                </div>
             ) : providers.length === 0 ? (
                 <div className="rounded-xs border border-ink-500 bg-ink-100 px-6 py-12 text-center">
                     <Server className="mx-auto mb-4 h-8 w-8 text-paper-faint" aria-hidden />

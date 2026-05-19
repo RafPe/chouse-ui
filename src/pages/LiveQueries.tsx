@@ -56,6 +56,7 @@ import { useLiveQueries, useKillQuery, useLiveQueriesStats } from '@/hooks/useLi
 import { useRbacStore, RBAC_PERMISSIONS } from '@/stores';
 import { cn } from '@/lib/utils';
 import type { LiveQuery } from '@/api/live-queries';
+import { SkeletonRows } from '@/components/common/Skeletons';
 
 // ============================================
 // Helper Functions
@@ -525,10 +526,11 @@ export default function LiveQueriesTable({
                 {/* Table */}
                 <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-ink-500 bg-ink-100">
                     {isLoading ? (
-                        <div className="flex flex-col items-center justify-center p-16 text-center">
-                            <Loader2 className="mx-auto mb-4 h-6 w-6 animate-spin text-paper-dim" />
-                            <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-paper-faint">Loading live queries…</p>
-                        </div>
+                        <table className="w-full">
+                            <tbody>
+                                <SkeletonRows count={6} cols={5} />
+                            </tbody>
+                        </table>
                     ) : filteredQueries.length === 0 ? (
                         <div className="flex flex-col items-center justify-center p-16 text-center">
                             <div className="mb-4 grid h-12 w-12 place-items-center rounded-xs border border-ink-500 bg-ink-200 text-paper-dim">

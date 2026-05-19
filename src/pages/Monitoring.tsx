@@ -6,6 +6,9 @@ import {
   FileText,
   Zap,
   BarChart3,
+  Layers,
+  Stethoscope,
+  Network,
   type LucideIcon,
 } from "lucide-react";
 import InfoDialog from "@/components/common/InfoDialog";
@@ -17,6 +20,9 @@ import { DataControls } from "@/components/common/DataControls";
 import LogsPage from "./Logs";
 import MetricsPage from "./Metrics";
 import LiveQueriesTable from "./LiveQueries";
+import PartsPage from "./Parts";
+import SchemaDoctorPage from "./SchemaDoctor";
+import ClusterActivityPage from "./ClusterActivity";
 
 interface TabConfig {
   icon: LucideIcon;
@@ -42,9 +48,30 @@ const TAB_CONFIG: Record<TabKey, TabConfig> = {
     label: "Metrics",
     description: "Performance analytics",
   },
+  parts: {
+    icon: Layers,
+    label: "Parts",
+    description: "Merges, mutations & part movements",
+  },
+  schema: {
+    icon: Stethoscope,
+    label: "Schema doctor",
+    description: "Nullable & oversized column lints",
+  },
+  cluster: {
+    icon: Network,
+    label: "Cluster activity",
+    description: "Mutations & replication queue",
+  },
 };
 
-type TabKey = "live-queries" | "logs" | "metrics";
+type TabKey =
+  | "live-queries"
+  | "logs"
+  | "metrics"
+  | "parts"
+  | "schema"
+  | "cluster";
 
 interface TabCardProps {
   tabKey: TabKey;
@@ -123,10 +150,16 @@ export default function Monitoring() {
     RBAC_PERMISSIONS.METRICS_VIEW,
     RBAC_PERMISSIONS.METRICS_VIEW_ADVANCED,
   ]);
+  const canViewParts = canViewMetrics;
+  const canViewSchema = canViewMetrics;
+  const canViewCluster = canViewMetrics;
 
   const availableTabs: TabKey[] = [
     ...(canViewLogs ? (["logs"] as TabKey[]) : []),
     ...(canViewMetrics ? (["metrics"] as TabKey[]) : []),
+    ...(canViewParts ? (["parts"] as TabKey[]) : []),
+    ...(canViewSchema ? (["schema"] as TabKey[]) : []),
+    ...(canViewCluster ? (["cluster"] as TabKey[]) : []),
     ...(canViewLiveQueries ? (["live-queries"] as TabKey[]) : []),
   ];
 
@@ -260,6 +293,38 @@ export default function Monitoring() {
             />
           </div>
         )}
+
+        {activeTab === "parts" && canViewParts && (
+          <div className="h-full overflow-hidden rounded-md border border-ink-500 bg-ink-100">
+            <PartsPage
+              embedded
+              refreshKey={refreshKey}
+              autoRefresh={autoRefresh}
+              onRefreshChange={setIsRefreshing}
+            />
+          </div>
+        )}
+
+        {activeTab === "schema" && canViewSchema && (
+          <div className="h-full overflow-hidden rounded-md border border-ink-500 bg-ink-100">
+            <SchemaDoctorPage
+              embedded
+              refreshKey={refreshKey}
+              onRefreshChange={setIsRefreshing}
+            />
+          </div>
+        )}
+
+        {activeTab === "cluster" && canViewCluster && (
+          <div className="h-full overflow-hidden rounded-md border border-ink-500 bg-ink-100">
+            <ClusterActivityPage
+              embedded
+              refreshKey={refreshKey}
+              autoRefresh={autoRefresh}
+              onRefreshChange={setIsRefreshing}
+            />
+          </div>
+        )}
       </div>
 
       {/* Info dialog */}
@@ -291,6 +356,9 @@ export default function Monitoring() {
                       {key === "live-queries" && "View and terminate running queries in real-time."}
                       {key === "logs" && "Browse historical query logs and execution history."}
                       {key === "metrics" && "Analyze system performance and resource usage."}
+                      {key === "parts" && "Track MergeTree merges, mutations, downloads, and removals."}
+                      {key === "schema" && "Lint columns for needless Nullable wrappers and oversized integers."}
+                      {key === "cluster" && "Track in-flight ALTER mutations and the per-replica replication queue."}
                     </span>
                   </div>
                 </div>
