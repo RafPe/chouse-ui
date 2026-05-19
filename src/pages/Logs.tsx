@@ -334,7 +334,7 @@ export default function LogsPage({
     refetch,
     error,
     dataUpdatedAt,
-  } = useQueryLogs(fetchLimit, undefined, rbacUserIdFilter, timeRangeHours);
+  } = useQueryLogs(fetchLimit, undefined, rbacUserIdFilter, timeRangeHours, sortKey, sortDir);
 
   const isAnyLoading = isLoading || isFetching;
 

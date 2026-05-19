@@ -494,17 +494,37 @@ export function useTableSchema(
  * Hook to fetch query logs
  */
 /**
+ * SQL column → sort target mapping. Whitelist keeps the dynamic ORDER BY
+ * safe from injection.
+ */
+const QUERY_LOG_SORT_COLUMNS: Record<string, string> = {
+  event_time: '__table1.event_time',
+  type: 'type',
+  query: 'query',
+  user: 'user',
+  query_duration_ms: 'query_duration_ms',
+  read_rows: 'read_rows',
+  read_bytes: 'read_bytes',
+  memory_usage: 'memory_usage',
+  query_id: 'query_id',
+};
+
+/**
  * Hook to fetch query logs
  * @param limit - Number of logs to fetch
  * @param username - Optional ClickHouse username to filter by (legacy, for backward compatibility)
  * @param rbacUserId - Optional RBAC user ID to filter by (for non-super-admin users)
  * @param hoursBack - Time window (defaults to 24h to preserve legacy behavior)
+ * @param sortBy - Column name to sort the SQL fetch by (must match QUERY_LOG_SORT_COLUMNS)
+ * @param sortDir - Sort direction; defaults to DESC
  */
 export function useQueryLogs(
   limit: number = 100,
   username?: string,
   rbacUserId?: string,
   hoursBack: number = 24,
+  sortBy: string = 'event_time',
+  sortDir: 'asc' | 'desc' = 'desc',
   options?: Partial<UseQueryOptions<Array<{
     type: string;
     event_date: string;
@@ -529,8 +549,20 @@ export function useQueryLogs(
   // Build user filter clause (legacy support for ClickHouse username)
   const userFilter = username ? `AND user = '${username}'` : '';
 
+  const orderColumn = QUERY_LOG_SORT_COLUMNS[sortBy] ?? '__table1.event_time';
+  const orderDir = sortDir === 'asc' ? 'ASC' : 'DESC';
+
   return useQuery({
-    queryKey: ['queryLogs', limit, username, rbacUserId, hoursBack, activeConnectionId] as const,
+    queryKey: [
+      'queryLogs',
+      limit,
+      username,
+      rbacUserId,
+      hoursBack,
+      sortBy,
+      sortDir,
+      activeConnectionId,
+    ] as const,
     queryFn: async () => {
       // event_date >= today() - 1 keeps partition pruning for the common 24h window;
       // event_time provides sub-day precision for narrower selections (15m/1h/6h).
@@ -557,7 +589,7 @@ export function useQueryLogs(
           AND __table1.event_time >= now() - INTERVAL ${hoursBack} HOUR
           AND type IN ('QueryFinish', 'ExceptionWhileProcessing', 'ExceptionBeforeStart')
           ${userFilter}
-          ORDER BY __table1.event_time DESC
+          ORDER BY ${orderColumn} ${orderDir}
           LIMIT ${limit}
         `);
 
