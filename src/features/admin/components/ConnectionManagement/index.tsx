@@ -216,56 +216,62 @@ function ConnectionFormDialog({
     }
   };
 
+  const LABEL_CLASS = "font-mono text-[10px] uppercase tracking-[0.14em] text-paper-dim";
+  const INPUT_CLASS =
+    "h-9 rounded-xs border-ink-500 bg-ink-200 font-mono text-[12px] text-paper placeholder:text-paper-faint focus-visible:border-brand focus-visible:ring-0";
+  const HELP_CLASS = "text-[11px] text-paper-faint";
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[500px] bg-gray-900 border-gray-800">
-        <DialogHeader>
-          <DialogTitle className="text-white flex items-center gap-2">
-            <Server className="w-5 h-5" />
-            {isEditing ? 'Edit Connection' : 'Add Connection'}
+      <DialogContent className="sm:max-w-[520px] rounded-xs border-ink-500 bg-ink-100 p-0">
+        <DialogHeader className="border-b border-ink-500 px-5 py-4">
+          <DialogTitle className="flex items-center gap-3 text-paper">
+            <span className="grid h-9 w-9 place-items-center rounded-xs border border-ink-500 bg-ink-200 text-paper-muted">
+              <Server className="h-4 w-4" aria-hidden />
+            </span>
+            <span className="flex flex-col gap-0.5 text-left">
+              <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-faint">
+                {isEditing ? "Edit server" : "New server"}
+              </span>
+              <span className="text-[15px] font-semibold tracking-tight">
+                {isEditing ? "Edit connection" : "Add connection"}
+              </span>
+            </span>
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="text-[12px] text-paper-muted">
             {isEditing
-              ? 'Update the ClickHouse connection details.'
-              : 'Add a new ClickHouse server connection.'}
+              ? "Update the ClickHouse server credentials."
+              : "Wire up a ClickHouse server — host, port, credentials."}
           </DialogDescription>
         </DialogHeader>
 
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-4 px-5 py-4">
             <FormField
               control={form.control}
               name="name"
               render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Connection Name</FormLabel>
+                <FormItem className="space-y-1.5">
+                  <FormLabel className={LABEL_CLASS}>Connection name</FormLabel>
                   <FormControl>
-                    <Input
-                      placeholder="Production Cluster"
-                      className="bg-gray-800 border-gray-700"
-                      {...field}
-                    />
+                    <Input placeholder="Production cluster" className={INPUT_CLASS} {...field} />
                   </FormControl>
-                  <FormMessage />
+                  <FormMessage className="text-[11px] text-red-300" />
                 </FormItem>
               )}
             />
 
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-3 gap-3">
               <FormField
                 control={form.control}
                 name="host"
                 render={({ field }) => (
-                  <FormItem className="col-span-2">
-                    <FormLabel>Host</FormLabel>
+                  <FormItem className="col-span-2 space-y-1.5">
+                    <FormLabel className={LABEL_CLASS}>Host</FormLabel>
                     <FormControl>
-                      <Input
-                        placeholder="localhost"
-                        className="bg-gray-800 border-gray-700"
-                        {...field}
-                      />
+                      <Input placeholder="localhost" className={INPUT_CLASS} {...field} />
                     </FormControl>
-                    <FormMessage />
+                    <FormMessage className="text-[11px] text-red-300" />
                   </FormItem>
                 )}
               />
@@ -274,39 +280,37 @@ function ConnectionFormDialog({
                 control={form.control}
                 name="port"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Port</FormLabel>
+                  <FormItem className="space-y-1.5">
+                    <FormLabel className={LABEL_CLASS}>Port</FormLabel>
                     <FormControl>
                       <Input
                         type="number"
                         placeholder="8123"
-                        className="bg-gray-800 border-gray-700"
+                        className={INPUT_CLASS}
                         {...field}
                         value={field.value ?? 8123}
-                        onChange={(e) => field.onChange(e.target.value === '' ? 8123 : Number(e.target.value))}
+                        onChange={(e) =>
+                          field.onChange(e.target.value === "" ? 8123 : Number(e.target.value))
+                        }
                       />
                     </FormControl>
-                    <FormMessage />
+                    <FormMessage className="text-[11px] text-red-300" />
                   </FormItem>
                 )}
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-3">
               <FormField
                 control={form.control}
                 name="username"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Username</FormLabel>
+                  <FormItem className="space-y-1.5">
+                    <FormLabel className={LABEL_CLASS}>Username</FormLabel>
                     <FormControl>
-                      <Input
-                        placeholder="default"
-                        className="bg-gray-800 border-gray-700"
-                        {...field}
-                      />
+                      <Input placeholder="default" className={INPUT_CLASS} {...field} />
                     </FormControl>
-                    <FormMessage />
+                    <FormMessage className="text-[11px] text-red-300" />
                   </FormItem>
                 )}
               />
@@ -315,28 +319,38 @@ function ConnectionFormDialog({
                 control={form.control}
                 name="password"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      Password {isEditing && <span className="text-gray-500">(leave empty to keep)</span>}
+                  <FormItem className="space-y-1.5">
+                    <FormLabel className={cn(LABEL_CLASS, "flex items-center gap-1.5")}>
+                      Password
+                      {isEditing && (
+                        <span className="text-paper-faint normal-case tracking-normal">
+                          (leave empty to keep)
+                        </span>
+                      )}
                     </FormLabel>
                     <FormControl>
                       <div className="relative">
                         <Input
-                          type={showPassword ? 'text' : 'password'}
+                          type={showPassword ? "text" : "password"}
                           placeholder="••••••••"
-                          className="bg-gray-800 border-gray-700 pr-10"
+                          className={cn(INPUT_CLASS, "pr-9")}
                           {...field}
                         />
                         <button
                           type="button"
                           onClick={() => setShowPassword(!showPassword)}
-                          className="absolute right-2 top-2.5 text-gray-400 hover:text-white"
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-paper-dim hover:text-paper"
+                          aria-label={showPassword ? "Hide password" : "Show password"}
                         >
-                          {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          {showPassword ? (
+                            <EyeOff className="h-3.5 w-3.5" />
+                          ) : (
+                            <Eye className="h-3.5 w-3.5" />
+                          )}
                         </button>
                       </div>
                     </FormControl>
-                    <FormMessage />
+                    <FormMessage className="text-[11px] text-red-300" />
                   </FormItem>
                 )}
               />
@@ -346,19 +360,15 @@ function ConnectionFormDialog({
               control={form.control}
               name="database"
               render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Default Database (optional)</FormLabel>
+                <FormItem className="space-y-1.5">
+                  <FormLabel className={LABEL_CLASS}>Default database (optional)</FormLabel>
                   <FormControl>
-                    <Input
-                      placeholder="default"
-                      className="bg-gray-800 border-gray-700"
-                      {...field}
-                    />
+                    <Input placeholder="default" className={INPUT_CLASS} {...field} />
                   </FormControl>
-                  <FormDescription>
-                    Leave empty to use the server's default database
+                  <FormDescription className={HELP_CLASS}>
+                    Leave empty to use the server's default database.
                   </FormDescription>
-                  <FormMessage />
+                  <FormMessage className="text-[11px] text-red-300" />
                 </FormItem>
               )}
             />
@@ -367,90 +377,100 @@ function ConnectionFormDialog({
               control={form.control}
               name="sslEnabled"
               render={({ field }) => (
-                <FormItem className="flex flex-row items-center justify-between rounded-lg border border-gray-700 p-3">
-                  <div className="space-y-0.5">
-                    <FormLabel className="text-base flex items-center gap-2">
-                      <Lock className="w-4 h-4" />
-                      SSL/TLS Enabled
-                    </FormLabel>
-                    <FormDescription>
-                      Use HTTPS for secure connections
-                    </FormDescription>
+                <FormItem className="flex flex-row items-center justify-between gap-3 rounded-xs border border-ink-500 bg-ink-200 px-3 py-2.5">
+                  <div className="flex items-start gap-2.5">
+                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-xs border border-ink-500 bg-ink-100 text-paper-muted">
+                      {field.value ? (
+                        <Lock className="h-3.5 w-3.5 text-brand" aria-hidden />
+                      ) : (
+                        <Unlock className="h-3.5 w-3.5" aria-hidden />
+                      )}
+                    </span>
+                    <div className="flex flex-col gap-0.5">
+                      <FormLabel className="text-[13px] font-medium text-paper">
+                        SSL / TLS
+                      </FormLabel>
+                      <FormDescription className={HELP_CLASS}>
+                        Use HTTPS for secure connections.
+                      </FormDescription>
+                    </div>
                   </div>
                   <FormControl>
-                    <Switch
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
-                    />
+                    <Switch checked={field.value} onCheckedChange={field.onChange} />
                   </FormControl>
                 </FormItem>
               )}
             />
 
-            {/* Test Result */}
             {testResult && (
               <div
-                className={`p-3 rounded-lg border ${testResult.success
-                  ? 'bg-green-500/10 border-green-500/20'
-                  : 'bg-red-500/10 border-red-500/20'
-                  }`}
+                className={cn(
+                  "flex flex-col gap-1.5 rounded-xs border px-3 py-2.5",
+                  testResult.success
+                    ? "border-emerald-500/40 bg-emerald-950/30"
+                    : "border-red-500/40 bg-red-950/30"
+                )}
               >
                 <div className="flex items-center gap-2">
                   {testResult.success ? (
-                    <CheckCircle2 className="w-4 h-4 text-green-400" />
+                    <CheckCircle2 className="h-4 w-4 text-emerald-300" />
                   ) : (
-                    <AlertCircle className="w-4 h-4 text-red-400" />
+                    <AlertCircle className="h-4 w-4 text-red-300" />
                   )}
-                  <span className={testResult.success ? 'text-green-300' : 'text-red-300'}>
-                    {testResult.success ? 'Connection successful' : 'Connection failed'}
+                  <span
+                    className={cn(
+                      "text-[13px] font-medium",
+                      testResult.success ? "text-emerald-200" : "text-red-200"
+                    )}
+                  >
+                    {testResult.success ? "Connection successful" : "Connection failed"}
                   </span>
                 </div>
                 {testResult.success && testResult.version && (
-                  <div className="mt-2 text-sm text-gray-400">
-                    <span>Version: {testResult.version}</span>
+                  <div className="flex items-center gap-3 pl-6 font-mono text-[11px] text-emerald-200/80">
+                    <span>v{testResult.version}</span>
                     {testResult.latencyMs && (
-                      <span className="ml-3">
-                        <Clock className="w-3 h-3 inline mr-1" />
+                      <span className="inline-flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
                         {testResult.latencyMs}ms
                       </span>
                     )}
                   </div>
                 )}
                 {!testResult.success && testResult.error && (
-                  <p className="mt-1 text-sm text-red-400">{testResult.error}</p>
+                  <p className="pl-6 font-mono text-[11px] text-red-200/80">{testResult.error}</p>
                 )}
               </div>
             )}
 
-            <DialogFooter className="gap-2 sm:gap-0">
+            <DialogFooter className="gap-2 border-t border-ink-500 pt-4 sm:gap-2">
               <Button
                 type="button"
                 variant="outline"
                 onClick={handleTest}
-                disabled={isTesting || !form.watch('host') || !form.watch('username')}
-                className="gap-2 bg-white/5 border-white/10 hover:bg-white/10 transition-all"
+                disabled={isTesting || !form.watch("host") || !form.watch("username")}
+                className="h-9 gap-2 rounded-xs border-ink-500 bg-ink-200 px-3 font-mono text-[11px] uppercase tracking-[0.14em] text-paper hover:border-ink-700 hover:bg-ink-300 disabled:opacity-50"
               >
                 {isTesting ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
-                  <Play className="w-4 h-4 mr-2" />
+                  <Play className="h-3.5 w-3.5" />
                 )}
-                Test Connection
+                Test connection
               </Button>
               <Button
                 type="submit"
-                variant="outline"
                 disabled={isSubmitting}
-                className="gap-2 bg-white/5 border-white/10 hover:bg-white/10 transition-all"
+                className="h-9 gap-2 rounded-xs bg-brand px-3 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-50 hover:bg-brand-soft disabled:opacity-50"
               >
                 {isSubmitting ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : isEditing ? (
-                  <Check className="w-4 h-4 mr-2" />
+                  <Check className="h-3.5 w-3.5" />
                 ) : (
-                  <Plus className="w-4 h-4 mr-2" />
+                  <Plus className="h-3.5 w-3.5" />
                 )}
-                {isEditing ? 'Update' : 'Create'}
+                {isEditing ? "Update" : "Create"}
               </Button>
             </DialogFooter>
           </form>
