@@ -498,11 +498,13 @@ export function useTableSchema(
  * @param limit - Number of logs to fetch
  * @param username - Optional ClickHouse username to filter by (legacy, for backward compatibility)
  * @param rbacUserId - Optional RBAC user ID to filter by (for non-super-admin users)
+ * @param hoursBack - Time window (defaults to 24h to preserve legacy behavior)
  */
 export function useQueryLogs(
   limit: number = 100,
   username?: string,
   rbacUserId?: string,
+  hoursBack: number = 24,
   options?: Partial<UseQueryOptions<Array<{
     type: string;
     event_date: string;
@@ -528,11 +530,12 @@ export function useQueryLogs(
   const userFilter = username ? `AND user = '${username}'` : '';
 
   return useQuery({
-    queryKey: ['queryLogs', limit, username, rbacUserId, activeConnectionId] as const,
+    queryKey: ['queryLogs', limit, username, rbacUserId, hoursBack, activeConnectionId] as const,
     queryFn: async () => {
-      // Fetch query logs
+      // event_date >= today() - 1 keeps partition pruning for the common 24h window;
+      // event_time provides sub-day precision for narrower selections (15m/1h/6h).
       const result = await queryApi.executeQuery(`
-          SELECT 
+          SELECT
             type,
             event_date,
             formatDateTime(event_time, '%H:%i:%S') as event_time,
@@ -548,6 +551,7 @@ export function useQueryLogs(
             Settings['log_comment'] as log_comment_json
           FROM system.query_log AS __table1
           WHERE event_date >= today() - 1
+          AND __table1.event_time >= now() - INTERVAL ${hoursBack} HOUR
           AND type != 'QueryStart'
           ${userFilter}
           ORDER BY __table1.event_time DESC

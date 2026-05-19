@@ -1,33 +1,21 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import {
   FileText,
-  RefreshCw,
   Search,
   Filter,
-  Clock,
   CheckCircle2,
   XCircle,
   AlertTriangle,
-  Play,
-  Pause,
-  Download,
-  BarChart3,
-  Timer,
-  Database,
-  User,
   Zap,
-  ChevronDown,
-  ChevronUp,
-  Copy,
-  ArrowUpDown,
+  User,
   Shield,
   X,
+  Copy,
+  ChevronDown,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -35,42 +23,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useTheme } from "@/components/common/theme-provider";
 import { useQueryLogs, usePaginationPreference, useLogsPreferences } from "@/hooks";
 import { useRbacStore, RBAC_PERMISSIONS } from "@/stores";
 import { cn } from "@/lib/utils";
+import { DataControls } from "@/components/common/DataControls";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { DataControls } from "@/components/common/DataControls";
-
-interface StatCardProps {
-  title: string;
-  value: string | number;
-  icon: any;
-  color?: string; // accepted for API compat, not used in editorial layout
-}
-
-const StatCard = ({ title, value, icon: Icon }: StatCardProps) => (
-  <div className="flex flex-col gap-2 border-b border-r border-ink-500 px-5 py-4">
-    <div className="flex items-center justify-between">
-      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-faint">
-        {title}
-      </span>
-      <Icon className="h-3.5 w-3.5 text-paper-dim" aria-hidden />
-    </div>
-    <span className="font-mono text-[20px] font-semibold leading-none text-paper">
-      {value}
-    </span>
-  </div>
-);
-
 import { useQuery } from "@tanstack/react-query";
 import { rbacUsersApi, rbacRolesApi } from "@/api/rbac";
-import { SkeletonList } from "@/components/common/Skeletons";
+import { SkeletonRows } from "@/components/common/Skeletons";
+import { QueryTimelineChart } from "@/components/monitoring/QueryTimelineChart";
+import type { TimelineBucket } from "@/hooks/useMonitoringTimeline";
 
 interface LogEntry {
   type: string;
@@ -99,18 +66,13 @@ interface LogFilterParams {
 
 interface ProcessedLogsResult {
   logs: LogEntry[];
-  stats: {
-    total: number;
-    success: number;
-    failed: number;
-    avgDuration: number;
-  };
-  exceptionQueryIds: Set<string>; // Track query_ids that have ExceptionWhileProcessing entries
+  exceptionQueryIds: Set<string>;
 }
 
 /**
- * Shared function to filter, deduplicate, and calculate stats for logs
- * This ensures consistency between display and stats calculation
+ * Filter + dedup logs by query_id. ExceptionWhileProcessing > QueryStart-with-exception
+ * > QueryFinish > QueryStart. Returns the limited, sorted list plus the set of
+ * query_ids that ever carried an exception entry.
  */
 function processLogs(
   logs: LogEntry[],
@@ -119,371 +81,135 @@ function processLogs(
 ): ProcessedLogsResult {
   const { searchTerm, logType, selectedRoleId, usersByRoleData } = filters;
 
-  // Get user IDs for role filter
   const hasRoleFilter = selectedRoleId !== "all";
-  const roleUserIds = hasRoleFilter && usersByRoleData?.users && usersByRoleData.users.length > 0
-    ? new Set(usersByRoleData.users.map(u => u.id))
-    : null;
+  const roleUserIds =
+    hasRoleFilter && usersByRoleData?.users && usersByRoleData.users.length > 0
+      ? new Set(usersByRoleData.users.map((u) => u.id))
+      : null;
 
-  // First, identify all query_ids that have reached final states
-  // This helps us exclude them when filtering by "Running" and for stats calculation
-  // Note: QueryStart with exception should also be considered a final (failed) state
   const finalStateQueryIds = new Set<string>();
-  // Also track which query_ids have ExceptionWhileProcessing entries (even if filtered out)
   const exceptionQueryIds = new Set<string>();
   logs.forEach((log) => {
     const hasException = log.exception && log.exception.trim().length > 0;
-    if (log.type === 'QueryFinish' || log.type === 'ExceptionWhileProcessing' || log.type === 'ExceptionBeforeStart' || (log.type === 'QueryStart' && hasException)) {
+    if (
+      log.type === "QueryFinish" ||
+      log.type === "ExceptionWhileProcessing" ||
+      log.type === "ExceptionBeforeStart" ||
+      (log.type === "QueryStart" && hasException)
+    ) {
       finalStateQueryIds.add(log.query_id);
     }
-    // Track queries that have ExceptionWhileProcessing or ExceptionBeforeStart entries
-    if (log.type === 'ExceptionWhileProcessing' || log.type === 'ExceptionBeforeStart') {
+    if (log.type === "ExceptionWhileProcessing" || log.type === "ExceptionBeforeStart") {
       exceptionQueryIds.add(log.query_id);
     }
   });
 
-  // Also track final states in the filtered set (for accurate stats)
-  const filteredFinalStateQueryIds = new Set<string>();
-
-  // If searching by query_id, find all logs with that query_id first
-  // This ensures we include the query even if it's in a different state
   const searchByQueryId = searchTerm && searchTerm.trim().length > 0;
   const matchingQueryIds = new Set<string>();
   if (searchByQueryId) {
     const searchLower = searchTerm.toLowerCase().trim();
     logs.forEach((log) => {
       if (log.query_id) {
-        const logQueryIdLower = log.query_id.toLowerCase();
-        // Exact match or contains match
-        if (logQueryIdLower === searchLower || logQueryIdLower.includes(searchLower)) {
+        const idLower = log.query_id.toLowerCase();
+        if (idLower === searchLower || idLower.includes(searchLower)) {
           matchingQueryIds.add(log.query_id);
         }
       }
     });
   }
 
-  // Apply all filters
   const filtered = logs.filter((log) => {
-    // If searching by query_id and this log's query_id matches, include it
-    // This takes priority to ensure we find the query even if other filters would exclude it
-    const matchesQueryIdSearch = searchByQueryId && matchingQueryIds.has(log.query_id);
-
-    // If we have a query_id match, bypass other search filters
-    const matchesSearch = matchesQueryIdSearch || (
+    const matchesIdSearch = searchByQueryId && matchingQueryIds.has(log.query_id);
+    const matchesSearch =
+      matchesIdSearch ||
       !searchTerm ||
       log.query?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       log.query_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       log.user?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.rbacUser?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+      log.rbacUser?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesType = logType === "all" || log.type === logType;
 
-    // Filter by role if role is selected
     let matchesRole = true;
     if (hasRoleFilter) {
       if (roleUserIds && roleUserIds.size > 0) {
-        // When filtering by role, only include logs that have a rbacUserId
-        // and that rbacUserId is in the set of users with the selected role
-        if (log.rbacUserId) {
-          matchesRole = roleUserIds.has(log.rbacUserId);
-        } else {
-          // If log doesn't have rbacUserId, exclude it when filtering by role
-          // (we can't determine which user ran it, so we can't filter by role)
-          matchesRole = false;
-        }
+        matchesRole = log.rbacUserId ? roleUserIds.has(log.rbacUserId) : false;
       } else {
-        // If role is selected but no users found with that role, show no logs
         matchesRole = false;
       }
     }
 
-    const matches = matchesSearch && matchesType && matchesRole;
-
-    // Track final states in filtered set
-    // QueryStart with exception should also be considered a final (failed) state
-    const hasException = log.exception && log.exception.trim().length > 0;
-    if (matches && (log.type === 'QueryFinish' || log.type === 'ExceptionWhileProcessing' || log.type === 'ExceptionBeforeStart' || (log.type === 'QueryStart' && hasException))) {
-      filteredFinalStateQueryIds.add(log.query_id);
-    }
-
-    return matches;
+    return matchesSearch && matchesType && matchesRole;
   });
 
-  // Deduplicate by query_id - keep only one entry per query_id
-  // Priority: ExceptionWhileProcessing > QueryStart with exception > QueryFinish > QueryStart (or most recent if same type)
   const queryMap = new Map<string, LogEntry>();
-
   for (const log of filtered) {
-    // If filtering by "Running" and this query_id has a final state, skip it
-    if (logType === "QueryStart" && finalStateQueryIds.has(log.query_id)) {
+    if (logType === "QueryStart" && finalStateQueryIds.has(log.query_id)) continue;
+
+    const existing = queryMap.get(log.query_id);
+    if (!existing) {
+      queryMap.set(log.query_id, log);
       continue;
     }
 
-    const existing = queryMap.get(log.query_id);
+    const priority = (e: LogEntry): number => {
+      if (e.type === "ExceptionWhileProcessing" || e.type === "ExceptionBeforeStart") return 4;
+      const hasEx = e.exception && e.exception.trim().length > 0;
+      const hasExEntry = exceptionQueryIds.has(e.query_id);
+      if (e.type === "QueryStart" && (hasEx || hasExEntry)) return 3;
+      if (e.type === "QueryFinish") return 2;
+      if (e.type === "QueryStart") return 1;
+      return 0;
+    };
 
-    if (!existing) {
-      // First occurrence of this query_id
+    const ep = priority(existing);
+    const cp = priority(log);
+    if (cp > ep) {
       queryMap.set(log.query_id, log);
-    } else {
-      // Determine which log to keep based on status priority and timestamp
-      // QueryStart with exception should be treated as failed (high priority)
-      // Also check if there's an ExceptionWhileProcessing or ExceptionBeforeStart entry for this query_id
-      const getPriority = (logEntry: LogEntry): number => {
-        if (logEntry.type === 'ExceptionWhileProcessing' || logEntry.type === 'ExceptionBeforeStart') return 4; // Highest priority (failed states)
-        const hasException = logEntry.exception && logEntry.exception.trim().length > 0;
-        const hasExceptionEntry = exceptionQueryIds.has(logEntry.query_id);
-        if (logEntry.type === 'QueryStart' && (hasException || hasExceptionEntry)) return 3; // QueryStart with exception or exception entry = failed
-        if (logEntry.type === 'QueryFinish') return 2; // Success
-        if (logEntry.type === 'QueryStart') return 1; // Running
-        return 0;
-      };
-
-      const existingPriority = getPriority(existing);
-      const currentPriority = getPriority(log);
-
-      if (currentPriority > existingPriority) {
-        // Current log has higher priority status
+    } else if (cp === ep && cp > 0) {
+      if (log.event_date > existing.event_date) {
         queryMap.set(log.query_id, log);
-      } else if (currentPriority === existingPriority && currentPriority > 0) {
-        // Same priority status, keep the most recent one
-        // Compare by event_date first, then event_time
-        const existingDate = existing.event_date;
-        const currentDate = log.event_date;
-        if (currentDate > existingDate) {
-          queryMap.set(log.query_id, log);
-        } else if (currentDate === existingDate) {
-          // Same date, compare by time
-          if (log.event_time > existing.event_time) {
-            queryMap.set(log.query_id, log);
-          }
-        }
+      } else if (log.event_date === existing.event_date && log.event_time > existing.event_time) {
+        queryMap.set(log.query_id, log);
       }
-      // Otherwise keep the existing one
     }
   }
 
-  // Convert map back to array and sort by timestamp (most recent first)
   const deduplicated = Array.from(queryMap.values()).sort((a, b) => {
-    // Compare by date first, then time
-    if (b.event_date !== a.event_date) {
-      return b.event_date.localeCompare(a.event_date);
-    }
+    if (b.event_date !== a.event_date) return b.event_date.localeCompare(a.event_date);
     return b.event_time.localeCompare(a.event_time);
   });
 
-  // Apply the requested limit AFTER deduplication
-  const limitedLogs = deduplicated.slice(0, limit);
-
-  // Calculate stats from the limited, deduplicated logs
-  let success = 0;
-  let failed = 0;
-  let running = 0;
-  const durations: number[] = [];
-
-  limitedLogs.forEach((log) => {
-    // Check if QueryStart has exception - treat as failed
-    // Check for truthy and non-empty exception string
-    // Also check if there's an ExceptionWhileProcessing entry for this query_id (even if filtered out)
-    const hasException = log.exception && log.exception.trim().length > 0;
-    const hasExceptionEntry = exceptionQueryIds.has(log.query_id);
-    const isFailedQueryStart = log.type === "QueryStart" && (hasException || hasExceptionEntry);
-
-    if (log.type === "QueryFinish") {
-      success++;
-      if (log.query_duration_ms) {
-        durations.push(log.query_duration_ms);
-      }
-    } else if (log.type === "ExceptionWhileProcessing" || log.type === "ExceptionBeforeStart" || isFailedQueryStart) {
-      failed++;
-      if (log.query_duration_ms) {
-        durations.push(log.query_duration_ms);
-      }
-    } else if (log.type === "QueryStart") {
-      // Running queries are now filtered out
-    }
-  });
-
-  const total = limitedLogs.length;
-  const avgDuration = durations.length > 0
-    ? Math.round(durations.reduce((sum, d) => sum + d, 0) / durations.length)
-    : 0;
-
-  return {
-    logs: limitedLogs,
-    stats: {
-      total,
-      success,
-      failed,
-      avgDuration,
-    },
-    exceptionQueryIds,
-  };
+  return { logs: deduplicated.slice(0, limit), exceptionQueryIds };
 }
 
-// Summary stat component
-interface LogStatProps {
-  title: string;
-  value: string | number;
-  icon: React.ElementType;
-  color: string;
-  bgColor: string;
+const RANGE_OPTIONS: Array<{ label: string; hours: number }> = [
+  { label: "15m", hours: 0.25 },
+  { label: "1h", hours: 1 },
+  { label: "6h", hours: 6 },
+  { label: "24h", hours: 24 },
+];
+
+function bucketFor(hours: number): TimelineBucket {
+  return hours > 12 ? "hour" : "minute";
 }
 
-const LogStat: React.FC<LogStatProps> = ({ title, value, icon: Icon, color, bgColor }) => (
-  <div className={cn("flex items-center gap-3 p-3 rounded-xl", bgColor)}>
-    <Icon className={cn("h-4 w-4", color)} />
-    <div>
-      <p className="text-xs text-gray-400">{title}</p>
-      <p className="text-lg font-bold text-white">{value}</p>
-    </div>
-  </div>
-);
-
-// Query detail modal/expanded view
-interface QueryDetailProps {
-  log: LogEntry;
-  onClose: () => void;
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let v = bytes;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v >= 100 || i === 0 ? v.toFixed(0) : v.toFixed(1)} ${units[i]}`;
 }
 
-const QueryDetail: React.FC<QueryDetailProps & { isFailed?: boolean; exceptionQueryIds?: Set<string> }> = ({ log, onClose, isFailed, exceptionQueryIds }) => {
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-  };
-
-  // Determine if this log is failed (use provided isFailed or calculate)
-  const logIsFailed = isFailed !== undefined ? isFailed : (
-    log.type === "ExceptionWhileProcessing" || log.type === "ExceptionBeforeStart" ||
-    (log.type === "QueryStart" && (
-      (log.exception && log.exception.trim().length > 0) ||
-      (exceptionQueryIds?.has(log.query_id) || false)
-    ))
-  );
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, height: 0 }}
-      animate={{ opacity: 1, height: "auto" }}
-      exit={{ opacity: 0, height: 0 }}
-      className="col-span-full bg-white/5 rounded-xl p-4 border border-white/10"
-    >
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex items-center gap-2">
-          {log.type === "QueryFinish" ? (
-            <CheckCircle2 className="h-5 w-5 text-green-500" />
-          ) : logIsFailed ? (
-            <XCircle className="h-5 w-5 text-red-500" />
-          ) : (
-            <Play className="h-5 w-5 text-blue-500" />
-          )}
-          <span className="font-medium text-white">{log.type}</span>
-        </div>
-        <Button variant="ghost" size="sm" onClick={onClose}>
-          <ChevronUp className="h-4 w-4" />
-        </Button>
-      </div>
-
-      <div className="space-y-4">
-        {/* Query ID */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-gray-400 uppercase tracking-wider">Query ID</span>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 text-xs gap-1"
-              onClick={() => copyToClipboard(log.query_id)}
-            >
-              <Copy className="h-3 w-3" />
-              Copy
-            </Button>
-          </div>
-          <div className="bg-black/30 rounded-lg p-3">
-            <p className="text-sm text-gray-300 font-mono break-all">{log.query_id}</p>
-          </div>
-        </div>
-
-        {/* Query */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-gray-400 uppercase tracking-wider">Query</span>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 text-xs gap-1"
-              onClick={() => copyToClipboard(log.query)}
-            >
-              <Copy className="h-3 w-3" />
-              Copy
-            </Button>
-          </div>
-          <pre className="bg-black/30 rounded-lg p-3 text-sm text-gray-300 font-mono overflow-x-auto whitespace-pre-wrap break-all">
-            {log.query}
-          </pre>
-        </div>
-
-        {/* Stats Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="bg-white/5 rounded-lg p-3">
-            <p className="text-xs text-gray-400">Duration</p>
-            <p className="font-mono text-white">{log.query_duration_ms}ms</p>
-          </div>
-          <div className="bg-white/5 rounded-lg p-3">
-            <p className="text-xs text-gray-400">Rows Read</p>
-            <p className="font-mono text-white">{log.read_rows.toLocaleString()}</p>
-          </div>
-          <div className="bg-white/5 rounded-lg p-3">
-            <p className="text-xs text-gray-400">Data Read</p>
-            <p className="font-mono text-white">{(log.read_bytes / 1024 / 1024).toFixed(2)} MB</p>
-          </div>
-          <div className="bg-white/5 rounded-lg p-3">
-            <p className="text-xs text-gray-400">Memory</p>
-            <p className="font-mono text-white">{(log.memory_usage / 1024 / 1024).toFixed(2)} MB</p>
-          </div>
-        </div>
-
-        {/* Exception if exists */}
-        {log.exception && (
-          <div>
-            <span className="text-xs text-red-400 uppercase tracking-wider">Exception</span>
-            <pre className="mt-2 bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-sm text-red-300 font-mono overflow-x-auto whitespace-pre-wrap">
-              {log.exception}
-            </pre>
-          </div>
-        )}
-
-        {/* Meta */}
-        <div className="flex items-center gap-4 text-xs text-gray-500">
-          <span className="flex items-center gap-1">
-            <User className="h-3 w-3" />
-            {log.rbacUser ? (
-              <span title={`RBAC User: ${log.rbacUser}${log.rbacUserId ? ` (${log.rbacUserId.substring(0, 8)}...)` : ''}\nClickHouse User: ${log.user}`}>
-                {log.rbacUser}
-                {(log.connectionName || log.connectionId) && (
-                  <span className="text-gray-500 ml-1">
-                    ({log.connectionName || `ID: ${log.connectionId?.substring(0, 8)}...`})
-                  </span>
-                )}
-              </span>
-            ) : (
-              <span title={`ClickHouse User: ${log.user}`}>
-                {log.user}
-                {(log.connectionName || log.connectionId) && (
-                  <span className="text-gray-500 ml-1">
-                    ({log.connectionName || `ID: ${log.connectionId?.substring(0, 8)}...`})
-                  </span>
-                )}
-              </span>
-            )}
-          </span>
-          <span className="flex items-center gap-1">
-            <Clock className="h-3 w-3" />
-            {log.event_date} {log.event_time}
-          </span>
-        </div>
-      </div>
-    </motion.div>
-  );
-};
+function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 1) return "<1ms";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
+}
 
 interface LogsPageProps {
   embedded?: boolean;
@@ -492,56 +218,55 @@ interface LogsPageProps {
   onRefreshChange?: (isRefreshing: boolean) => void;
 }
 
-export default function LogsPage({ embedded = false, refreshKey = 0, autoRefresh: externalAutoRefresh = false, onRefreshChange }: LogsPageProps) {
-  const { theme } = useTheme();
+export default function LogsPage({
+  embedded = false,
+  refreshKey = 0,
+  autoRefresh: externalAutoRefresh = false,
+  onRefreshChange,
+}: LogsPageProps) {
   const { isSuperAdmin, user, hasPermission } = useRbacStore();
   const canViewAllLogs = isSuperAdmin() || hasPermission(RBAC_PERMISSIONS.QUERY_HISTORY_VIEW_ALL);
-  const { pageSize: defaultLimit, setPageSize: setLimitPreference } = usePaginationPreference('logs');
+  const { pageSize: defaultLimit, setPageSize: setLimitPreference } =
+    usePaginationPreference("logs");
   const { preferences: logsPrefs, updatePreferences: updateLogsPrefs } = useLogsPreferences();
 
   const [limit, setLimit] = useState(defaultLimit);
+  useEffect(() => setLimit(defaultLimit), [defaultLimit]);
 
-  // Sync limit state when preference changes
-  useEffect(() => {
-    setLimit(defaultLimit);
-  }, [defaultLimit]);
-
-  // Initialize state from preferences
   const [searchTerm, setSearchTerm] = useState(logsPrefs.defaultSearchQuery || "");
   const [logType, setLogType] = useState<string>(logsPrefs.defaultLogType || "all");
-  const [expandedLog, setExpandedLog] = useState<string | null>(null);
   const [internalAutoRefresh, setInternalAutoRefresh] = useState(logsPrefs.autoRefresh || false);
 
-  // Use external autoRefresh if embedded, otherwise internal state
   const autoRefresh = embedded ? externalAutoRefresh : internalAutoRefresh;
-  const setAutoRefresh = embedded ? () => { } : setInternalAutoRefresh;
-  const [selectedUserId, setSelectedUserId] = useState<string>(logsPrefs.defaultSelectedUserId || "all");
-  const [selectedRoleId, setSelectedRoleId] = useState<string>(logsPrefs.defaultSelectedRoleId || "all");
-  const previousLogStatesRef = useRef<Map<string, string>>(new Map());
-  const [statusChangedIds, setStatusChangedIds] = useState<Set<string>>(new Set());
+  const setAutoRefresh = embedded ? () => {} : setInternalAutoRefresh;
+  const [selectedUserId, setSelectedUserId] = useState<string>(
+    logsPrefs.defaultSelectedUserId || "all"
+  );
+  const [selectedRoleId, setSelectedRoleId] = useState<string>(
+    logsPrefs.defaultSelectedRoleId || "all"
+  );
+  const [timeRangeHours, setTimeRangeHours] = useState<number>(6);
+  const [expandedLog, setExpandedLog] = useState<string | null>(null);
 
-  // Update preferences when state changes (debounced)
+  const bucket = bucketFor(timeRangeHours);
+
   useEffect(() => {
-    const timeoutId = setTimeout(() => {
+    const id = setTimeout(() => {
       updateLogsPrefs({
         defaultLogType: logType,
-        autoRefresh: autoRefresh,
+        autoRefresh,
         defaultSelectedUserId: selectedUserId,
         defaultSelectedRoleId: selectedRoleId,
       });
     }, 500);
-    return () => clearTimeout(timeoutId);
+    return () => clearTimeout(id);
   }, [logType, autoRefresh, selectedUserId, selectedRoleId, updateLogsPrefs]);
 
-  // Update limit preference when limit changes
   useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      setLimitPreference(limit);
-    }, 500);
-    return () => clearTimeout(timeoutId);
+    const id = setTimeout(() => setLimitPreference(limit), 500);
+    return () => clearTimeout(id);
   }, [limit, setLimitPreference]);
 
-  // Clear all filters
   const clearFilters = () => {
     setSearchTerm("");
     setLogType("all");
@@ -549,481 +274,588 @@ export default function LogsPage({ embedded = false, refreshKey = 0, autoRefresh
     setSelectedRoleId("all");
   };
 
-  // Check if any filters are active
-  const hasActiveFilters = searchTerm.trim().length > 0 || logType !== "all" || selectedUserId !== "all" || selectedRoleId !== "all";
+  const hasActiveFilters =
+    searchTerm.trim().length > 0 ||
+    logType !== "all" ||
+    selectedUserId !== "all" ||
+    selectedRoleId !== "all";
 
-  // Fetch users list for users who can view all logs
   const { data: usersData } = useQuery({
-    queryKey: ['rbac-users-list'],
+    queryKey: ["rbac-users-list"],
     queryFn: () => rbacUsersApi.list({ limit: 1000, isActive: true }),
-    enabled: canViewAllLogs, // Only fetch for users who can see all logs
-    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+    enabled: canViewAllLogs,
+    staleTime: 5 * 60 * 1000,
   });
 
-  // Fetch roles list for users who can view all logs
   const { data: rolesData } = useQuery({
-    queryKey: ['rbac-roles-list'],
+    queryKey: ["rbac-roles-list"],
     queryFn: () => rbacRolesApi.list(),
-    enabled: canViewAllLogs, // Only fetch for users who can see all logs
-    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+    enabled: canViewAllLogs,
+    staleTime: 5 * 60 * 1000,
   });
 
-  // Fetch users with selected role when role filter is applied
   const { data: usersByRoleData } = useQuery({
-    queryKey: ['rbac-users-by-role', selectedRoleId],
-    queryFn: () => rbacUsersApi.list({ limit: 1000, isActive: true, roleId: selectedRoleId }),
+    queryKey: ["rbac-users-by-role", selectedRoleId],
+    queryFn: () =>
+      rbacUsersApi.list({ limit: 1000, isActive: true, roleId: selectedRoleId }),
     enabled: canViewAllLogs && selectedRoleId !== "all",
-    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+    staleTime: 5 * 60 * 1000,
   });
 
-  // Users with QUERY_HISTORY_VIEW_ALL or super_admin can see all logs
-  // All other users only see their own logs
-  // If user can view all logs and selects a specific user, filter by that user
-  // If user can view all logs and selects a role, filter by users with that role
   const rbacUserIdFilter = canViewAllLogs
-    ? (selectedUserId !== "all"
+    ? selectedUserId !== "all"
       ? selectedUserId
-      : (selectedRoleId !== "all" && usersByRoleData?.users.length
-        ? undefined // Will filter client-side by role user IDs
-        : undefined))
+      : undefined
     : user?.id;
-  // Fetch more logs than requested to account for:
-  // 1. Deduplication (multiple entries per query_id: QueryStart, QueryFinish, Exception)
-  // 2. Filtering (search, logType, role filters may exclude many logs)
-  // Use a higher multiplier to ensure we get enough unique queries after all filtering
-  // Reuse hasActiveFilters variable defined above
-  // If filters are active, use a much higher multiplier (20x) to account for filtering reducing the pool significantly
-  // If no filters, 5x should be sufficient for deduplication only
-  // This ensures we fetch enough logs to get the requested number of unique queries after filtering + deduplication
-  const multiplier = hasActiveFilters ? 20 : 5;
-  const fetchLimit = Math.max(limit * multiplier, 1000); // Higher multiplier when filters active, minimum 1000 to ensure enough data
-  const { data: logs = [], isLoading, isFetching, refetch, error, dataUpdatedAt } = useQueryLogs(fetchLimit, undefined, rbacUserIdFilter);
 
-  // Combined loading state
+  const multiplier = hasActiveFilters ? 20 : 5;
+  const fetchLimit = Math.max(limit * multiplier, 1000);
+  const {
+    data: logs = [],
+    isLoading,
+    isFetching,
+    refetch,
+    error,
+    dataUpdatedAt,
+  } = useQueryLogs(fetchLimit, undefined, rbacUserIdFilter, timeRangeHours);
+
   const isAnyLoading = isLoading || isFetching;
 
-  // Notify parent of refresh status change
   useEffect(() => {
     onRefreshChange?.(isAnyLoading);
   }, [isAnyLoading, onRefreshChange]);
 
-  // Manual refresh effect
   useEffect(() => {
-    if (refreshKey) {
-      refetch();
-    }
+    if (refreshKey) refetch();
   }, [refreshKey, refetch]);
 
-  // Auto refresh
   React.useEffect(() => {
-    if (autoRefresh) {
-      const interval = setInterval(() => refetch(), 5000);
-      return () => clearInterval(interval);
-    }
+    if (!autoRefresh) return;
+    const id = setInterval(() => refetch(), 5000);
+    return () => clearInterval(id);
   }, [autoRefresh, refetch]);
 
+  const processed = useMemo(
+    () =>
+      processLogs(
+        logs,
+        {
+          searchTerm,
+          logType,
+          selectedRoleId,
+          usersByRoleData: usersByRoleData || null,
+        },
+        limit
+      ),
+    [logs, searchTerm, logType, selectedRoleId, usersByRoleData, limit]
+  );
 
+  const filteredLogs = processed.logs;
+  const exceptionQueryIds = processed.exceptionQueryIds;
 
-  // Use shared function to process logs - ensures consistency between display and stats
-  const processedLogs = useMemo(() => {
-    return processLogs(
-      logs,
-      {
-        searchTerm,
-        logType,
-        selectedRoleId,
-        usersByRoleData: usersByRoleData || null,
-      },
-      limit
-    );
-  }, [logs, searchTerm, logType, selectedRoleId, usersByRoleData, limit]);
-
-  const filteredLogs = processedLogs.logs;
-  const exceptionQueryIds = processedLogs.exceptionQueryIds;
-
-  // Helper function to check if a log entry represents a failed query
-  const isFailedLog = useCallback((log: LogEntry): boolean => {
-    if (log.type === "ExceptionWhileProcessing" || log.type === "ExceptionBeforeStart") return true;
-    if (log.type === "QueryStart") {
-      const hasException = log.exception && log.exception.trim().length > 0;
-      const hasExceptionEntry = exceptionQueryIds.has(log.query_id);
-      return hasException || hasExceptionEntry;
-    }
-    return false;
-  }, [exceptionQueryIds]);
-
-  // Track status changes for animation
-  useEffect(() => {
-    const changedIds = new Set<string>();
-    const newStates = new Map<string, string>();
-    const previousLogStates = previousLogStatesRef.current;
-
-    filteredLogs.forEach((log) => {
-      const previousState = previousLogStates.get(log.query_id);
-      newStates.set(log.query_id, log.type);
-
-      // Check if status changed from QueryStart to a final state
-      // Also handle QueryStart with exception (should be treated as failed)
-      const hasException = log.exception && log.exception.trim().length > 0;
-      const isFinalState = log.type === 'QueryFinish' || log.type === 'ExceptionWhileProcessing' || log.type === 'ExceptionBeforeStart' || (log.type === 'QueryStart' && hasException);
-      if (previousState === 'QueryStart' && isFinalState) {
-        changedIds.add(log.query_id);
+  const isFailedLog = useCallback(
+    (log: LogEntry): boolean => {
+      if (log.type === "ExceptionWhileProcessing" || log.type === "ExceptionBeforeStart")
+        return true;
+      if (log.type === "QueryStart") {
+        const hasEx = log.exception && log.exception.trim().length > 0;
+        return Boolean(hasEx) || exceptionQueryIds.has(log.query_id);
       }
-    });
+      return false;
+    },
+    [exceptionQueryIds]
+  );
 
-    if (changedIds.size > 0) {
-      setStatusChangedIds(changedIds);
-      // Clear the animation after 2 seconds
-      const timeoutId = setTimeout(() => {
-        setStatusChangedIds(new Set());
-      }, 2000);
-
-      // Cleanup timeout on unmount or when filteredLogs change
-      return () => {
-        clearTimeout(timeoutId);
-      };
-    }
-
-    // Update the ref with new states
-    previousLogStatesRef.current = newStates;
-  }, [filteredLogs]);
-
-  // Stats are calculated by the shared processLogs function - guaranteed consistency
-  const stats = processedLogs.stats;
-
-  const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString() : "--:--:--";
+  const lastUpdated = dataUpdatedAt
+    ? new Date(dataUpdatedAt).toLocaleTimeString()
+    : "--:--:--";
 
   return (
-    <div className="h-full overflow-hidden">
-      <div className={cn(
-        "mx-auto space-y-6 flex flex-col h-full",
-        embedded ? "p-4" : "p-6"
-      )}>
-        {/* Header - separate title and controls */}
-        {!embedded ? (
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6"
-          >
-            {/* Title section */}
-            <div className="flex items-center gap-3">
-              <span className="grid h-10 w-10 place-items-center rounded-xs border border-ink-500 bg-ink-100 text-paper-muted">
-                <FileText className="h-4 w-4" aria-hidden />
+    <div className="flex h-full w-full flex-col overflow-hidden">
+      {/* Standalone page header */}
+      {!embedded && (
+        <div className="flex flex-col gap-4 border-b border-ink-500 px-6 pb-4 pt-6 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-3">
+            <span className="grid h-10 w-10 place-items-center rounded-xs border border-ink-500 bg-ink-100 text-paper-muted">
+              <FileText className="h-4 w-4" aria-hidden />
+            </span>
+            <div className="flex flex-col gap-1">
+              <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-faint">
+                Observability
               </span>
-              <div className="flex flex-col gap-1">
-                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-faint">
-                  Observability
-                </span>
-                <div className="flex items-center gap-3">
-                  <h1 className="text-2xl font-semibold tracking-tight text-paper">Query logs</h1>
-                  {!canViewAllLogs && user && (
-                    <span className="inline-flex items-center gap-1 rounded-xs border border-ink-500 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-muted">
-                      <User className="h-3 w-3" />
-                      Your queries only
-                    </span>
-                  )}
-                </div>
+              <div className="flex items-center gap-3">
+                <h1 className="text-2xl font-semibold tracking-tight text-paper">Query logs</h1>
+                {!canViewAllLogs && user && (
+                  <span className="inline-flex items-center gap-1 rounded-xs border border-ink-500 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-muted">
+                    <User className="h-3 w-3" />
+                    Your queries only
+                  </span>
+                )}
               </div>
             </div>
+          </div>
 
-            {/* Data Controls - Top Right */}
-            <DataControls
-              lastUpdated={lastUpdated}
-              isRefreshing={isFetching}
-              onRefresh={() => refetch()}
-              autoRefresh={autoRefresh}
-              onAutoRefreshChange={setAutoRefresh}
-            />
-          </motion.div>
-        ) : null}
-
-
-
-
-        {/* Summary stats — hairline editorial grid */}
-        <div className="grid grid-cols-2 border-l border-t border-ink-500 lg:grid-cols-4">
-          <StatCard title="Total queries" value={stats.total} icon={Database} />
-          <StatCard title="Successful" value={stats.success} icon={CheckCircle2} />
-          <StatCard title="Failed" value={stats.failed} icon={XCircle} />
-          <StatCard title="Avg duration" value={`${Math.round(stats.avgDuration)}ms`} icon={Timer} />
+          <DataControls
+            lastUpdated={lastUpdated}
+            isRefreshing={isFetching}
+            onRefresh={() => refetch()}
+            autoRefresh={autoRefresh}
+            onAutoRefreshChange={setAutoRefresh}
+          />
         </div>
+      )}
 
+      {/* Top strip — filters + time range + counter */}
+      <div className={cn("border-b border-ink-500 bg-ink-100", embedded ? "px-4" : "px-6")}>
+        <div className="flex flex-wrap items-center gap-3 py-2.5">
+          <div className="flex items-center gap-2">
+            <Search className="h-3.5 w-3.5 text-paper-dim" />
+            <Input
+              placeholder="Search query, user, ID…"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="h-8 w-[260px] rounded-xs border-ink-500 bg-ink-200 font-mono text-[11px] text-paper placeholder:text-paper-faint focus-visible:border-brand focus-visible:ring-0"
+            />
+          </div>
 
-
-        {/* Filters */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.15 }}
-        >
-          <div className="flex flex-wrap items-center gap-3 rounded-md border border-ink-500 bg-ink-100 p-3">
-            <div className="flex w-full items-center gap-2 md:w-[320px]">
-              <Search className="h-4 w-4 text-paper-dim" />
-              <Input
-                placeholder="Search queries, users, IDs…"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="h-9 rounded-xs border-ink-500 bg-ink-200 font-mono text-[12px] text-paper placeholder:text-paper-faint focus-visible:border-brand focus-visible:ring-0"
-              />
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Filter className="h-4 w-4 text-paper-dim" />
-              <Select value={logType} onValueChange={setLogType}>
-                <SelectTrigger className="h-9 w-[140px] rounded-xs border-ink-500 bg-ink-200 font-mono text-[12px] text-paper">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Types</SelectItem>
-                  <SelectItem value="QueryFinish">Success</SelectItem>
-
-                  <SelectItem value="ExceptionWhileProcessing">Failed</SelectItem>
-                  <SelectItem value="ExceptionBeforeStart">Failed (Before Start)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {canViewAllLogs && (
-              <>
-                <div className="flex items-center gap-2">
-                  <User className="h-4 w-4 text-paper-dim" />
-                  <Select
-                    value={selectedUserId}
-                    onValueChange={(value) => {
-                      setSelectedUserId(value);
-                      // Clear role filter when user is selected
-                      if (value !== "all") {
-                        setSelectedRoleId("all");
-                      }
-                    }}
-                  >
-                    <SelectTrigger className="h-9 w-[180px] rounded-xs border-ink-500 bg-ink-200 font-mono text-[12px] text-paper [&>span]:text-left [&>span]:truncate">
-                      <SelectValue placeholder="All Users" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Users</SelectItem>
-                      {usersData?.users.map((u) => (
-                        <SelectItem key={u.id} value={u.id}>
-                          {u.displayName || u.username || u.email || u.id.substring(0, 8)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Shield className="h-4 w-4 text-paper-dim" />
-                  <Select
-                    value={selectedRoleId}
-                    onValueChange={(value) => {
-                      setSelectedRoleId(value);
-                      // Clear user filter when role is selected
-                      if (value !== "all") {
-                        setSelectedUserId("all");
-                      }
-                    }}
-                  >
-                    <SelectTrigger className="h-9 w-[180px] rounded-xs border-ink-500 bg-ink-200 font-mono text-[12px] text-paper [&>span]:text-left [&>span]:truncate">
-                      <SelectValue placeholder="All Roles" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Roles</SelectItem>
-                      {rolesData?.map((role) => (
-                        <SelectItem key={role.id} value={role.id}>
-                          {role.displayName || role.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </>
-            )}
-
-            <Select
-              value={String(limit)}
-              onValueChange={(v) => {
-                const newLimit = Number(v);
-                if (!isNaN(newLimit) && newLimit > 0) {
-                  setLimit(newLimit);
-                  setLimitPreference(newLimit);
-                }
-              }}
-            >
-              <SelectTrigger className="h-9 w-[120px] rounded-xs border-ink-500 bg-ink-200 font-mono text-[12px] text-paper">
-                <SelectValue placeholder="Select rows" />
+          <div className="flex items-center gap-1.5">
+            <Filter className="h-3.5 w-3.5 text-paper-dim" />
+            <Select value={logType} onValueChange={setLogType}>
+              <SelectTrigger className="h-8 w-[120px] rounded-xs border-ink-500 bg-ink-200 font-mono text-[11px] text-paper">
+                <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="50">50 rows</SelectItem>
-                <SelectItem value="100">100 rows</SelectItem>
-                <SelectItem value="500">500 rows</SelectItem>
-                <SelectItem value="1000">1000 rows</SelectItem>
+                <SelectItem value="all">All types</SelectItem>
+                <SelectItem value="QueryFinish">Success</SelectItem>
+                <SelectItem value="ExceptionWhileProcessing">Failed</SelectItem>
+                <SelectItem value="ExceptionBeforeStart">Failed (before start)</SelectItem>
               </SelectContent>
             </Select>
+          </div>
 
-            {hasActiveFilters && (
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={clearFilters}
-                      className="h-9 gap-2 rounded-xs border-ink-500 bg-ink-200 px-3 font-mono text-[11px] uppercase tracking-[0.14em] text-paper-muted hover:border-ink-700 hover:bg-ink-300 hover:text-paper"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                      Clear filters
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Clear all filters</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+          {canViewAllLogs && (
+            <>
+              <Select
+                value={selectedUserId}
+                onValueChange={(v) => {
+                  setSelectedUserId(v);
+                  if (v !== "all") setSelectedRoleId("all");
+                }}
+              >
+                <SelectTrigger className="h-8 w-[160px] rounded-xs border-ink-500 bg-ink-200 font-mono text-[11px] text-paper [&>span]:truncate">
+                  <User className="h-3.5 w-3.5 text-paper-dim" />
+                  <SelectValue placeholder="All users" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All users</SelectItem>
+                  {usersData?.users.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.displayName || u.username || u.email || u.id.substring(0, 8)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select
+                value={selectedRoleId}
+                onValueChange={(v) => {
+                  setSelectedRoleId(v);
+                  if (v !== "all") setSelectedUserId("all");
+                }}
+              >
+                <SelectTrigger className="h-8 w-[140px] rounded-xs border-ink-500 bg-ink-200 font-mono text-[11px] text-paper [&>span]:truncate">
+                  <Shield className="h-3.5 w-3.5 text-paper-dim" />
+                  <SelectValue placeholder="All roles" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All roles</SelectItem>
+                  {rolesData?.map((role) => (
+                    <SelectItem key={role.id} value={role.id}>
+                      {role.displayName || role.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
+          )}
+
+          <Select
+            value={String(limit)}
+            onValueChange={(v) => {
+              const n = Number(v);
+              if (!isNaN(n) && n > 0) setLimit(n);
+            }}
+          >
+            <SelectTrigger className="h-8 w-[100px] rounded-xs border-ink-500 bg-ink-200 font-mono text-[11px] text-paper">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="50">50 rows</SelectItem>
+              <SelectItem value="100">100 rows</SelectItem>
+              <SelectItem value="500">500 rows</SelectItem>
+              <SelectItem value="1000">1000 rows</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {hasActiveFilters && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={clearFilters}
+              className="h-8 gap-1.5 rounded-xs border-ink-500 bg-ink-200 px-2.5 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-muted hover:border-ink-700 hover:bg-ink-300 hover:text-paper"
+            >
+              <X className="h-3 w-3" />
+              Clear
+            </Button>
+          )}
+
+          {/* Spacer */}
+          <div className="ml-auto flex items-center gap-3">
+            {/* Time range chips */}
+            <div
+              role="radiogroup"
+              aria-label="Time range"
+              className="flex items-center gap-0.5 rounded-xs border border-ink-500 bg-ink-200 p-0.5"
+            >
+              {RANGE_OPTIONS.map((opt) => {
+                const active = timeRangeHours === opt.hours;
+                return (
+                  <button
+                    key={opt.label}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setTimeRangeHours(opt.hours)}
+                    className={cn(
+                      "rounded-xs px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] transition-colors",
+                      active
+                        ? "bg-brand text-ink-50"
+                        : "text-paper-muted hover:bg-ink-300 hover:text-paper"
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">
+              Bucket · {bucket}
+            </span>
+
+            <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">
+              {filteredLogs.length.toLocaleString()} / {logs.length.toLocaleString()} queries
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Body — chart on top, table below */}
+      <div className={cn("flex flex-1 min-h-0 flex-col gap-4 overflow-hidden", embedded ? "p-4" : "p-6")}>
+        {/* Chart card */}
+        <QueryTimelineChart
+          hoursBack={timeRangeHours}
+          bucket={bucket}
+          refreshKey={refreshKey}
+        />
+
+        {/* Error banner */}
+        {error && (
+          <div className="flex items-center gap-3 rounded-xs border border-red-900/60 bg-red-950/40 p-3">
+            <AlertTriangle className="h-4 w-4 text-red-300" />
+            <p className="text-[13px] text-red-200">{error.message}</p>
+          </div>
+        )}
+
+        {/* Table card */}
+        <div className="flex-1 min-h-0 overflow-hidden rounded-md border border-ink-500 bg-ink-100">
+          <div className="h-full overflow-auto">
+            {isLoading ? (
+              <div className="p-4">
+                <SkeletonRows count={10} cols={7} />
+              </div>
+            ) : filteredLogs.length === 0 ? (
+              <div className="flex h-64 flex-col items-center justify-center gap-2 px-4 text-center">
+                <span className="grid h-12 w-12 place-items-center rounded-xs border border-ink-500 bg-ink-200 text-paper-dim">
+                  <FileText className="h-5 w-5" aria-hidden />
+                </span>
+                <span className="text-[13px] text-paper">No queries match</span>
+                <span className="text-[12px] text-paper-muted">
+                  {hasActiveFilters
+                    ? "Adjust filters or widen the time range."
+                    : `Nothing logged in the last ${timeRangeHours < 1 ? `${Math.round(timeRangeHours * 60)}m` : `${timeRangeHours}h`}.`}
+                </span>
+              </div>
+            ) : (
+              <LogsTable
+                rows={filteredLogs}
+                expanded={expandedLog}
+                onToggle={(id) => setExpandedLog((cur) => (cur === id ? null : id))}
+                isFailed={isFailedLog}
+              />
             )}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
+/* ============================================================
+   Compact logs table — QueryDog-style dense layout
+   ============================================================ */
 
+interface LogsTableProps {
+  rows: LogEntry[];
+  expanded: string | null;
+  onToggle: (id: string) => void;
+  isFailed: (log: LogEntry) => boolean;
+}
 
+const COLUMN_HEADERS = [
+  { label: "Time", align: "left" as const, w: "w-[88px]" },
+  { label: "", align: "left" as const, w: "w-[28px]" },
+  { label: "Query", align: "left" as const },
+  { label: "User", align: "left" as const, w: "w-[140px]" },
+  { label: "Duration", align: "right" as const, w: "w-[88px]" },
+  { label: "Read rows", align: "right" as const, w: "w-[96px]" },
+  { label: "Read bytes", align: "right" as const, w: "w-[96px]" },
+  { label: "Memory", align: "right" as const, w: "w-[96px]" },
+  { label: "Query ID", align: "left" as const, w: "w-[110px]" },
+];
 
-
-
-
-        </motion.div>
-
-
-
-        {/* Error State */}
-        <AnimatePresence>
-          {error && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              className="flex items-center gap-3 rounded-xs border border-red-900/60 bg-red-950/40 p-3"
-            >
-              <AlertTriangle className="h-4 w-4 text-red-300" />
-              <p className="text-[13px] text-red-200">{error.message}</p>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Logs Content */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
-          className="flex-1 min-h-0"
-        >
-          <div className="relative flex h-full flex-col overflow-hidden rounded-md border border-ink-500 bg-ink-100">
-            <div className="h-full overflow-auto p-4">
-              {isLoading ? (
-                <SkeletonList count={8} />
-              ) : filteredLogs.length === 0 ? (
-                <div className="flex h-64 flex-col items-center justify-center">
-                  <div className="mb-3 grid h-12 w-12 place-items-center rounded-xs border border-ink-500 bg-ink-200 text-paper-dim">
-                    <FileText className="h-5 w-5" aria-hidden />
-                  </div>
-                  <p className="text-[15px] font-medium text-paper">No logs found</p>
-                  <p className="text-[13px] text-paper-muted">Try adjusting your filters.</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {filteredLogs.map((log, i) => {
-                    const hasStatusChanged = statusChangedIds.has(log.query_id);
-                    return (
-                      <React.Fragment key={log.query_id + i}>
-                        <motion.div
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{
-                            opacity: 1,
-                            y: 0,
-                            scale: hasStatusChanged ? [1, 1.02, 1] : 1,
-                            backgroundColor: hasStatusChanged
-                              ? (log.type === "QueryFinish" ? "rgba(34, 197, 94, 0.1)" : (isFailedLog(log) ? "rgba(239, 68, 68, 0.1)" : "rgba(255, 255, 255, 0.05)"))
-                              : "rgba(255, 255, 255, 0.05)"
-                          }}
-                          transition={{
-                            delay: Math.min(i * 0.02, 0.5),
-                            scale: hasStatusChanged ? { duration: 0.5, ease: "easeOut" } : undefined,
-                            backgroundColor: hasStatusChanged ? { duration: 0.5 } : undefined
-                          }}
-                          onClick={() => setExpandedLog(expandedLog === log.query_id ? null : log.query_id)}
-                          className={cn(
-                            "flex items-center gap-3 cursor-pointer rounded-xs p-3 transition-colors",
-                            "border border-transparent hover:border-ink-500 hover:bg-ink-200",
-                            expandedLog === log.query_id && "border-ink-500 bg-ink-200",
-                            hasStatusChanged && "ring-1 ring-offset-2 ring-offset-ink-100",
-                            hasStatusChanged && log.type === "QueryFinish" && "ring-emerald-500/50",
-                            hasStatusChanged && isFailedLog(log) && "ring-red-500/50"
-                          )}
-                        >
-                          {/* Status Icon */}
-                          <motion.div
-                            className="flex-shrink-0"
-                            animate={{
-                              scale: hasStatusChanged ? [1, 1.2, 1] : 1,
-                            }}
-                            transition={{
-                              duration: 0.5,
-                              ease: "easeOut"
-                            }}
-                          >
-                            {log.type === "QueryFinish" ? (
-                              <CheckCircle2 className="h-4 w-4 text-green-500" />
-                            ) : isFailedLog(log) ? (
-                              <XCircle className="h-4 w-4 text-red-500" />
-                            ) : (
-                              <Zap className="h-4 w-4 text-amber-500 animate-pulse" />
-                            )}
-                          </motion.div>
-
-                          {/* Query Preview */}
-                          <div className="flex-1 overflow-hidden">
-                            <p className="text-sm text-gray-300 font-mono truncate">{log.query}</p>
-                            <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
-                              <span className="flex items-center gap-1" title={log.rbacUser ? `RBAC User: ${log.rbacUser}${log.rbacUserId ? ` (${log.rbacUserId.substring(0, 8)}...)` : ''}\nClickHouse User: ${log.user}` : `ClickHouse User: ${log.user}`}>
-                                <User className="h-3 w-3" />
-                                {log.rbacUser ? (
-                                  <span>{log.rbacUser}</span>
-                                ) : (
-                                  <span>{log.user}</span>
-                                )}
-                              </span>
-                              <span className="flex items-center gap-1">
-                                <Timer className="h-3 w-3" />
-                                {log.query_duration_ms}ms
-                              </span>
-                              <span className="flex items-center gap-1">
-                                <Clock className="h-3 w-3" />
-                                {log.event_time}
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Expand Icon */}
-                          <ChevronDown
-                            className={cn(
-                              "h-4 w-4 text-gray-500 transition-transform",
-                              expandedLog === log.query_id && "rotate-180"
-                            )}
-                          />
-                        </motion.div>
-
-                        <AnimatePresence>
-                          {expandedLog === log.query_id && (
-                            <QueryDetail log={log} onClose={() => setExpandedLog(null)} isFailed={isFailedLog(log)} exceptionQueryIds={exceptionQueryIds} />
-                          )}
-                        </AnimatePresence>
-                      </React.Fragment>
-                    );
-                  })}
-                </div>
+function LogsTable({ rows, expanded, onToggle, isFailed }: LogsTableProps) {
+  return (
+    <table className="w-full text-[12px]">
+      <thead className="sticky top-0 z-10 bg-ink-200/90 backdrop-blur">
+        <tr className="border-b border-ink-500">
+          {COLUMN_HEADERS.map((h, i) => (
+            <th
+              key={`${h.label}-${i}`}
+              className={cn(
+                "px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint",
+                h.align === "right" ? "text-right" : "text-left",
+                h.w
               )}
-            </div>
-          </div>
-        </motion.div>
-      </div >
-    </div >
+            >
+              {h.label}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((log, i) => (
+          <LogRow
+            key={`${log.query_id}-${i}`}
+            log={log}
+            isExpanded={expanded === log.query_id}
+            onToggle={() => onToggle(log.query_id)}
+            failed={isFailed(log)}
+          />
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+interface LogRowProps {
+  log: LogEntry;
+  isExpanded: boolean;
+  onToggle: () => void;
+  failed: boolean;
+}
+
+function LogRow({ log, isExpanded, onToggle, failed }: LogRowProps) {
+  const isFinish = log.type === "QueryFinish";
+  const StatusIcon = isFinish ? CheckCircle2 : failed ? XCircle : Zap;
+  const statusColor = isFinish
+    ? "text-emerald-400"
+    : failed
+      ? "text-red-400"
+      : "text-amber-400";
+
+  return (
+    <>
+      <tr
+        onClick={onToggle}
+        className={cn(
+          "cursor-pointer border-b border-ink-500/60 transition-colors",
+          isExpanded ? "bg-ink-200" : "hover:bg-ink-200/60"
+        )}
+      >
+        <td className="px-3 py-1.5 font-mono text-paper-muted whitespace-nowrap">
+          {log.event_time}
+        </td>
+        <td className="px-3 py-1.5">
+          <StatusIcon className={cn("h-3.5 w-3.5", statusColor)} aria-hidden />
+        </td>
+        <td className="px-3 py-1.5">
+          <span className="font-mono text-paper line-clamp-1" title={log.query}>
+            {log.query}
+          </span>
+        </td>
+        <td className="px-3 py-1.5 text-paper truncate">
+          {log.rbacUser ? (
+            <span title={`RBAC: ${log.rbacUser}\nClickHouse: ${log.user}`}>
+              {log.rbacUser}
+            </span>
+          ) : (
+            <span title={`ClickHouse user: ${log.user}`}>{log.user}</span>
+          )}
+        </td>
+        <td className="px-3 py-1.5 text-right font-mono text-paper">
+          {formatDuration(log.query_duration_ms)}
+        </td>
+        <td className="px-3 py-1.5 text-right font-mono text-paper-muted">
+          {log.read_rows.toLocaleString()}
+        </td>
+        <td className="px-3 py-1.5 text-right font-mono text-paper-muted">
+          {formatBytes(log.read_bytes)}
+        </td>
+        <td className="px-3 py-1.5 text-right font-mono text-paper-muted">
+          {formatBytes(log.memory_usage)}
+        </td>
+        <td
+          className="px-3 py-1.5 font-mono text-paper-faint truncate"
+          title={log.query_id}
+        >
+          {log.query_id.substring(0, 8)}…
+        </td>
+      </tr>
+
+      {isExpanded && (
+        <tr className="bg-ink-200/40">
+          <td colSpan={COLUMN_HEADERS.length} className="p-4">
+            <LogDetail log={log} failed={failed} onClose={onToggle} />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+interface LogDetailProps {
+  log: LogEntry;
+  failed: boolean;
+  onClose: () => void;
+}
+
+function LogDetail({ log, failed, onClose }: LogDetailProps) {
+  const copy = (text: string) => navigator.clipboard.writeText(text);
+
+  return (
+    <div className="flex flex-col gap-4 rounded-xs border border-ink-500 bg-ink-100 p-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span
+            className={cn(
+              "rounded-xs border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em]",
+              log.type === "QueryFinish"
+                ? "border-emerald-500/40 text-emerald-300"
+                : failed
+                  ? "border-red-500/40 text-red-300"
+                  : "border-amber-500/40 text-amber-300"
+            )}
+          >
+            {log.type}
+          </span>
+        </div>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onClose}
+                className="h-7 w-7 rounded-xs text-paper-dim hover:bg-ink-200 hover:text-paper"
+              >
+                <ChevronDown className="h-3.5 w-3.5 rotate-180" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Collapse</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">
+            Query
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => copy(log.query)}
+            className="h-6 gap-1.5 rounded-xs px-2 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-muted hover:bg-ink-200 hover:text-paper"
+          >
+            <Copy className="h-3 w-3" />
+            Copy
+          </Button>
+        </div>
+        <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-xs border border-ink-500 bg-ink-200 p-3 font-mono text-[12px] text-paper">
+          {log.query}
+        </pre>
+      </div>
+
+      {log.exception && (
+        <div className="flex flex-col gap-2">
+          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-red-300">
+            Exception
+          </span>
+          <pre className="overflow-x-auto whitespace-pre-wrap rounded-xs border border-red-900/60 bg-red-950/40 p-3 font-mono text-[12px] text-red-200">
+            {log.exception}
+          </pre>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <MetaCell label="Query ID" value={log.query_id} mono onCopy={() => copy(log.query_id)} />
+        <MetaCell
+          label="Connection"
+          value={log.connectionName || log.connectionId?.substring(0, 8) || "—"}
+        />
+        <MetaCell label="ClickHouse user" value={log.user} />
+        <MetaCell label="Event time" value={`${log.event_date} ${log.event_time}`} />
+      </div>
+    </div>
+  );
+}
+
+interface MetaCellProps {
+  label: string;
+  value: string;
+  mono?: boolean;
+  onCopy?: () => void;
+}
+
+function MetaCell({ label, value, mono, onCopy }: MetaCellProps) {
+  return (
+    <div className="flex flex-col gap-1 border-l border-ink-500 pl-3">
+      <div className="flex items-center justify-between">
+        <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-paper-faint">
+          {label}
+        </span>
+        {onCopy && (
+          <button
+            type="button"
+            onClick={onCopy}
+            className="text-paper-faint hover:text-paper"
+            aria-label={`Copy ${label}`}
+          >
+            <Copy className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+      <span
+        className={cn(
+          "truncate text-[12px] text-paper",
+          mono && "font-mono text-[11px]"
+        )}
+        title={value}
+      >
+        {value}
+      </span>
+    </div>
   );
 }
