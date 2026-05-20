@@ -156,6 +156,50 @@
   }
 }
 
+/*
+ * Status pill recipes — flip between light-tinted (pastel chip on white) and
+ * dark-tinted (deep-bg + bright fg on near-black) per theme. Replaces the
+ * verbose `border-X-900/60 bg-X-950/40 text-X-300` clusters scattered across
+ * the codebase. Apply via className="status-pill status-success" etc.
+ */
+@layer utilities {
+  .status-pill {
+    @apply inline-flex items-center gap-1 rounded-xs border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em];
+  }
+
+  .status-success {
+    @apply border-emerald-200 bg-emerald-50 text-emerald-700;
+  }
+  .dark .status-success {
+    @apply border-emerald-500/40 bg-emerald-950/40 text-emerald-300;
+  }
+
+  .status-danger {
+    @apply border-red-200 bg-red-50 text-red-700;
+  }
+  .dark .status-danger {
+    @apply border-red-500/40 bg-red-950/40 text-red-300;
+  }
+
+  .status-warn {
+    @apply border-amber-200 bg-amber-50 text-amber-700;
+  }
+  .dark .status-warn {
+    @apply border-amber-500/40 bg-amber-950/40 text-amber-300;
+  }
+
+  .status-info {
+    @apply border-sky-200 bg-sky-50 text-sky-700;
+  }
+  .dark .status-info {
+    @apply border-sky-500/40 bg-sky-950/40 text-sky-300;
+  }
+
+  .status-neutral {
+    @apply border-ink-500 bg-ink-200 text-paper-muted;
+  }
+}
+
 .skeleton {
   background-color: #e0e0e0;
   border-radius: 4px;

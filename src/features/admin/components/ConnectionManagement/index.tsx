@@ -407,20 +407,22 @@ function ConnectionFormDialog({
                 className={cn(
                   "flex flex-col gap-1.5 rounded-xs border px-3 py-2.5",
                   testResult.success
-                    ? "border-emerald-500/40 bg-emerald-950/30"
-                    : "border-red-500/40 bg-red-950/30"
+                    ? "border-emerald-200 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-950/30"
+                    : "border-red-200 bg-red-50 dark:border-red-500/40 dark:bg-red-950/30"
                 )}
               >
                 <div className="flex items-center gap-2">
                   {testResult.success ? (
-                    <CheckCircle2 className="h-4 w-4 text-emerald-300" />
+                    <CheckCircle2 className="h-4 w-4 text-emerald-700 dark:text-emerald-300" />
                   ) : (
-                    <AlertCircle className="h-4 w-4 text-red-300" />
+                    <AlertCircle className="h-4 w-4 text-red-700 dark:text-red-300" />
                   )}
                   <span
                     className={cn(
                       "text-[13px] font-medium",
-                      testResult.success ? "text-emerald-200" : "text-red-200"
+                      testResult.success
+                        ? "text-emerald-800 dark:text-emerald-200"
+                        : "text-red-800 dark:text-red-200"
                     )}
                   >
                     {testResult.success ? "Connection successful" : "Connection failed"}
@@ -689,17 +691,17 @@ export default function ConnectionManagement() {
                       </div>
                     </TableCell>
                     <TableCell className="text-gray-300">{conn.username}</TableCell>
-                    <TableCell className="text-gray-400">
-                      {conn.database || <span className="text-gray-600">default</span>}
+                    <TableCell className="text-paper-muted">
+                      {conn.database || <span className="text-paper-faint">default</span>}
                     </TableCell>
                     <TableCell>
                       {conn.isActive ? (
-                        <span className="inline-flex items-center gap-1 rounded-xs border border-emerald-900/60 bg-emerald-950/40 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-emerald-300">
+                        <span className="status-pill status-success">
                           <CheckCircle2 className="h-3 w-3" />
                           Active
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 rounded-xs border border-ink-500 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">
+                        <span className="status-pill status-neutral">
                           <X className="h-3 w-3" />
                           Inactive
                         </span>

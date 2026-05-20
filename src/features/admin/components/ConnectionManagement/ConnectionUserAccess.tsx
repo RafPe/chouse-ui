@@ -296,12 +296,12 @@ export default function ConnectionUserAccess({
                         </TableCell>
                         <TableCell>
                           {user.isActive ? (
-                            <span className="inline-flex items-center gap-1 rounded-xs border border-emerald-900/60 bg-emerald-950/40 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-emerald-300">
+                            <span className="status-pill status-success">
                               <CheckCircle2 className="h-3 w-3" />
                               Active
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 rounded-xs border border-ink-500 bg-ink-200 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">
+                            <span className="status-pill status-neutral">
                               <AlertCircle className="h-3 w-3" />
                               Inactive
                             </span>
