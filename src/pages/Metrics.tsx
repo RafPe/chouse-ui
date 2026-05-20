@@ -2158,51 +2158,46 @@ export default function Metrics({
                 </motion.div>
 
 
-                {/* SECTION 3: MEMORY BREAKDOWN — what server RAM is being
-                    used for right now. Replaces the old Memory Analysis
-                    section that overlaid OS RSS with MemoryTracking on the
-                    same axis, which gave nonsense like "657 GB tracked" next
-                    to a 63 GB RSS without indicating one was real and the
-                    other was an internal allocator counter. */}
+                {/* SECTION 3: MEMORY — current breakdown + allocator history
+                    in one card. Replaces the old "Memory Analysis" section
+                    that overlaid OS RSS with MemoryTracking on the same axis
+                    and produced the "Tracked: 657 GB vs RSS: 63 GB" misread
+                    that kicked this rework off. */}
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.3 }}
+                  className="flex flex-col rounded-md border border-ink-500 bg-ink-100"
                 >
-                  <ServerMemoryBreakdown />
-                </motion.div>
+                  <ServerMemoryBreakdown variant="inline" />
 
-                {/* Allocator history (jemalloc) — keep the time-series view
-                    for users who want to watch the allocator over the window. */}
-                {allocatorMemoryData && allocatorMemoryData.values.some(v => v.some(n => n > 0)) && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.35 }}
-                    className="rounded-md border border-ink-500 bg-ink-100 p-6"
-                  >
-                    <div className="flex items-center gap-3 mb-6">
-                      <span className="grid h-9 w-9 place-items-center rounded-xs border border-ink-500 bg-ink-200 text-paper-muted">
-                        <Database className="h-4 w-4" aria-hidden />
-                      </span>
-                      <div className="flex flex-col gap-0.5">
-                        <h3 className="text-[14px] font-semibold tracking-tight text-paper">Allocator history</h3>
-                        <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">jemalloc allocated / resident over time</p>
+                  {allocatorMemoryData && allocatorMemoryData.values.some(v => v.some(n => n > 0)) && (
+                    <div className="border-t border-ink-500 p-4">
+                      <div className="mb-3 flex items-center gap-2.5">
+                        <span className="grid h-7 w-7 place-items-center rounded-xs border border-ink-500 bg-ink-200 text-paper-muted">
+                          <Database className="h-3.5 w-3.5" aria-hidden />
+                        </span>
+                        <div className="flex flex-col leading-tight">
+                          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-faint">
+                            Allocator · jemalloc over time
+                          </span>
+                          <span className="text-[13px] font-medium text-paper">Allocated vs resident</span>
+                        </div>
                       </div>
-                    </div>
 
-                    <MetricChartCard
-                      title="Allocator Memory (jemalloc)"
-                      subtitle="Memory usage by jemalloc allocator"
-                      icon={Database}
-                      color="emerald"
-                      data={allocatorMemoryData}
-                      isLoading={prodLoading}
-                      chartTitle="Bytes"
-                      hideLatestValues
-                    />
-                  </motion.div>
-                )}
+                      <MetricChartCard
+                        title="Allocator Memory (jemalloc)"
+                        subtitle="Memory usage by jemalloc allocator"
+                        icon={Database}
+                        color="emerald"
+                        data={allocatorMemoryData}
+                        isLoading={prodLoading}
+                        chartTitle="Bytes"
+                        hideLatestValues
+                      />
+                    </div>
+                  )}
+                </motion.div>
 
                 {/* SECTION 4: LOAD AVERAGE & ZOOKEEPER */}
                 <motion.div

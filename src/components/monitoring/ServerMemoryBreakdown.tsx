@@ -4,14 +4,30 @@ import { MemoryStick } from "lucide-react";
 import { useServerMemoryBreakdown } from "@/hooks/useMonitoringTimeline";
 import { cn, formatBytes } from "@/lib/utils";
 
+interface ServerMemoryBreakdownProps {
+  /**
+   * "standalone" (default) renders inside its own bordered card.
+   * "inline" drops the outer border so the component can be embedded as the
+   * top section of a parent card (e.g. the merged Memory panel on Metrics →
+   * System that combines breakdown + allocator history in one shell).
+   */
+  variant?: "standalone" | "inline";
+}
+
 /**
  * "Where did the RAM go?" card. Top row shows the OS view —
  * total / used by ClickHouse / free. The stacked bar below decomposes
  * ClickHouse's RSS into attributable slices (caches, merges, in-flight
  * queries, index data) so an operator can answer "kepakai apa".
  */
-export function ServerMemoryBreakdown() {
+export function ServerMemoryBreakdown({ variant = "standalone" }: ServerMemoryBreakdownProps = {}) {
   const { data, isLoading, error } = useServerMemoryBreakdown();
+  const shellClass = variant === "inline"
+    ? "flex flex-col gap-4 px-4 py-4"
+    : "flex flex-col gap-4 rounded-xs border border-ink-500 bg-ink-100 px-4 py-4";
+  const loadingShellClass = variant === "inline"
+    ? "flex flex-col gap-3 px-4 py-4"
+    : "flex flex-col gap-3 rounded-xs border border-ink-500 bg-ink-100 px-4 py-4";
 
   const named = useMemo(() => {
     if (!data) return [];
@@ -54,7 +70,7 @@ export function ServerMemoryBreakdown() {
 
   if (isLoading) {
     return (
-      <div className="flex flex-col gap-3 rounded-xs border border-ink-500 bg-ink-100 px-4 py-4">
+      <div className={loadingShellClass}>
         <Header />
         <div className="h-4 w-full animate-pulse rounded-xs bg-ink-300" />
         <div className="h-12 w-full animate-pulse rounded-xs bg-ink-300" />
@@ -66,7 +82,7 @@ export function ServerMemoryBreakdown() {
   // no attributable slices. Otherwise render whatever subset we have.
   if (error || !data || (data.total_bytes === 0 && rss === 0 && accounted === 0)) {
     return (
-      <div className="flex flex-col gap-3 rounded-xs border border-ink-500 bg-ink-100 px-4 py-4">
+      <div className={loadingShellClass}>
         <Header />
         <p className="text-[12px] text-paper-muted">
           {error ? `Couldn't load memory breakdown — ${error.message}` : "Memory metrics aren't available on this server."}
@@ -85,7 +101,7 @@ export function ServerMemoryBreakdown() {
   const totalForBar = slices.reduce((s, x) => s + x.value, 0) || 1;
 
   return (
-    <div className="flex flex-col gap-4 rounded-xs border border-ink-500 bg-ink-100 px-4 py-4">
+    <div className={shellClass}>
       <Header />
 
       {/* Top: server-level totals. Falls back to a single tile when the
