@@ -162,18 +162,18 @@ export function QueryTimelineChart({
         {isLoading ? (
           <SkeletonChart height={192} />
         ) : error ? (
-          <div className="flex h-48 items-center justify-center text-[13px] text-paper-muted">
+          <div className="flex h-40 items-center justify-center text-[13px] text-paper-muted">
             Couldn't load timeline — {error.message}
           </div>
         ) : isEmpty ? (
-          <div className="flex h-48 flex-col items-center justify-center gap-1">
+          <div className="flex h-40 flex-col items-center justify-center gap-1">
             <span className="text-[13px] text-paper">Nothing to chart</span>
             <span className="text-[12px] text-paper-muted">
               No queries logged in the last {hoursBack}h.
             </span>
           </div>
         ) : (
-          <div className="h-48 w-full">
+          <div className="h-40 w-full">
             <ResponsiveContainer width="100%" height="100%">
               {renderChart(chartType, data ?? [], bucket, chartColors)}
             </ResponsiveContainer>
