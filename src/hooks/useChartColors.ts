@@ -22,13 +22,13 @@ const DARK: ChartColors = {
 };
 
 const LIGHT: ChartColors = {
-  grid: "#d4d4d8",
-  tick: "#71717a",
+  grid: "#e7e5e0",
+  tick: "#78716c",
   tooltipBg: "#ffffff",
-  tooltipBorder: "#d4d4d8",
-  tooltipText: "#18181b",
-  tooltipLabel: "#52525b",
-  cursor: "rgba(0, 0, 0, 0.04)",
+  tooltipBorder: "#d6d3cd",
+  tooltipText: "#1c1917",
+  tooltipLabel: "#57534e",
+  cursor: "rgba(28, 25, 23, 0.04)",
 };
 
 /**
