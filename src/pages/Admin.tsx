@@ -115,7 +115,10 @@ function TabCard({ tabKey, isActive, onClick, disabled }: TabCardProps) {
         >
           {config.label}
         </span>
-        <span className="truncate font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">
+        {/* Description trims to "…" on laptop-class viewports which reads
+            as broken; hide entirely below 2xl (1536px) so 13-15" laptops
+            stay clean and only the wide 24"+ monitor gets the eyebrow. */}
+        <span className="hidden truncate font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint 2xl:block">
           {config.description}
         </span>
       </div>
