@@ -87,7 +87,7 @@ function TabCard({ tabKey, isActive, onClick, disabled }: TabCardProps) {
       disabled={disabled}
       aria-pressed={isActive}
       className={cn(
-        "group relative flex min-w-[200px] items-start gap-3 border border-ink-500 px-4 py-3 text-left transition-colors",
+        "group @container relative flex flex-1 min-w-[160px] items-start gap-3 border border-ink-500 px-4 py-3 text-left transition-colors",
         "rounded-xs",
         isActive
           ? "border-ink-700 bg-ink-200 text-paper"
@@ -115,10 +115,12 @@ function TabCard({ tabKey, isActive, onClick, disabled }: TabCardProps) {
         >
           {config.label}
         </span>
-        {/* Description trims to "…" on laptop-class viewports which reads
-            as broken; hide entirely below 2xl (1536px) so 13-15" laptops
-            stay clean and only the wide 24"+ monitor gets the eyebrow. */}
-        <span className="hidden truncate font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint 2xl:block">
+        {/* Description appears only when the card itself is wide enough
+            to render it without truncation — driven by container queries
+            on the button so each card decides for itself, regardless of
+            viewport. 240px is roughly the point where mono-uppercase
+            10px at tracking-0.14em stops needing ellipsis. */}
+        <span className="hidden truncate font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint @[240px]:block">
           {config.description}
         </span>
       </div>
