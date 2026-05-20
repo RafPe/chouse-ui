@@ -216,7 +216,7 @@ export default function Admin() {
         <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-6 py-6">
           {activeTab === "users" && canViewUsers && (
             <TabsContent value="users" className="mt-0 h-full outline-none">
-              <div className="h-full overflow-hidden rounded-md border border-ink-500 bg-ink-100">
+              <div className="rounded-md border border-ink-500 bg-ink-100">
                 <UserTable />
               </div>
             </TabsContent>
@@ -224,7 +224,7 @@ export default function Admin() {
 
           {activeTab === "roles" && canViewRoles && (
             <TabsContent value="roles" className="mt-0 h-full outline-none">
-              <div className="h-full overflow-hidden rounded-md border border-ink-500 bg-ink-100">
+              <div className="rounded-md border border-ink-500 bg-ink-100">
                 <RbacRolesTable onCreateRole={() => {}} onEditRole={() => {}} />
               </div>
             </TabsContent>
@@ -232,7 +232,7 @@ export default function Admin() {
 
           {activeTab === "connections" && canViewConnections && (
             <TabsContent value="connections" className="mt-0 h-full outline-none">
-              <div className="h-full overflow-hidden rounded-md border border-ink-500 bg-ink-100">
+              <div className="rounded-md border border-ink-500 bg-ink-100">
                 <ConnectionManagement />
               </div>
             </TabsContent>
@@ -240,7 +240,7 @@ export default function Admin() {
 
           {activeTab === "clickhouse-users" && canViewClickHouseUsers && (
             <TabsContent value="clickhouse-users" className="mt-0 h-full outline-none">
-              <div className="h-full overflow-hidden rounded-md border border-ink-500 bg-ink-100">
+              <div className="rounded-md border border-ink-500 bg-ink-100">
                 <ClickHouseUsersManagement />
               </div>
             </TabsContent>
@@ -248,7 +248,7 @@ export default function Admin() {
 
           {activeTab === "ai-models" && canViewAiModels && (
             <TabsContent value="ai-models" className="mt-0 h-full outline-none">
-              <div className="h-full overflow-hidden rounded-md border border-ink-500 bg-ink-100">
+              <div className="rounded-md border border-ink-500 bg-ink-100">
                 <AiModelsManagement />
               </div>
             </TabsContent>
@@ -256,7 +256,7 @@ export default function Admin() {
 
           {activeTab === "audit" && canViewAudit && (
             <TabsContent value="audit" className="mt-0 h-full outline-none">
-              <div className="h-full overflow-hidden rounded-md border border-ink-500 bg-ink-100">
+              <div className="rounded-md border border-ink-500 bg-ink-100">
                 <RbacAuditLogs />
               </div>
             </TabsContent>
