@@ -714,9 +714,9 @@ export default function ConnectionManagement() {
                             variant="ghost"
                             size="sm"
                             onClick={() => openUserAccessDialog(conn)}
-                            className="h-8 text-gray-300 hover:text-white"
+                            className="h-8 gap-1.5 text-paper-muted hover:bg-ink-200 hover:text-paper"
                           >
-                            <Users className="w-4 h-4 mr-1" />
+                            <Users className="w-4 h-4" />
                             Manage Access
                           </Button>
                         </TooltipTrigger>
@@ -732,7 +732,7 @@ export default function ConnectionManagement() {
                               size="icon"
                               onClick={() => handleTest(conn)}
                               disabled={testingConnectionId === conn.id}
-                              className="h-8 w-8"
+                              className="h-8 w-8 text-paper-muted hover:bg-ink-200 hover:text-paper"
                             >
                               {testingConnectionId === conn.id ? (
                                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -752,7 +752,7 @@ export default function ConnectionManagement() {
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => handleToggleActive(conn)}
-                                  className="h-8 w-8"
+                                  className="h-8 w-8 text-paper-muted hover:bg-ink-200 hover:text-paper"
                                 >
                                   {conn.isActive ? (
                                     <Unlock className="w-4 h-4" />
@@ -772,7 +772,7 @@ export default function ConnectionManagement() {
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => openEditDialog(conn)}
-                                  className="h-8 w-8"
+                                  className="h-8 w-8 text-paper-muted hover:bg-ink-200 hover:text-paper"
                                 >
                                   <Pencil className="w-4 h-4" />
                                 </Button>
@@ -789,7 +789,7 @@ export default function ConnectionManagement() {
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => setDeleteConnection(conn)}
-                                className="h-8 w-8 text-red-400 hover:text-red-300"
+                                className="h-8 w-8 text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-950/40 dark:hover:text-red-300"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </Button>
