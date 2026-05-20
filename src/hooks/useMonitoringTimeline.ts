@@ -910,6 +910,222 @@ export interface SchemaLintRow {
   uncompressed_bytes: number;
 }
 
+export interface TopResourceQueryRow {
+  query_id: string;
+  user: string;
+  query: string;
+  event_time: string;
+  query_duration_ms: number;
+  memory_usage: number;        // peak memory_usage from system.query_log
+  cpu_microseconds: number;    // ProfileEvents['OSCPUVirtualTimeMicroseconds']
+  read_rows: number;
+  read_bytes: number;
+  thread_count: number;
+  type: string;                // QueryFinish / Exception*
+}
+
+type TopResourceMetric = "memory_usage" | "cpu_microseconds";
+
+/**
+ * Heaviest queries by a chosen resource (memory or CPU) over the window.
+ * Read from system.query_log so the result is historical, not just live —
+ * which is what an operator wants when chasing "what blew up the box at
+ * 03:00 last night". Limit kept tight; the table is a quick scan, not a
+ * paginated dataset.
+ */
+function useTopResourceQueries(
+  metric: TopResourceMetric,
+  hoursBack: number = 1,
+  limit: number = 10,
+  customRange?: AbsoluteRange,
+  options?: Partial<UseQueryOptions<TopResourceQueryRow[], Error>>
+) {
+  const { activeConnectionId } = useAuthStore();
+
+  return useQuery({
+    queryKey: [
+      "topResourceQueries",
+      metric,
+      hoursBack,
+      limit,
+      customRange?.start ?? null,
+      customRange?.end ?? null,
+      activeConnectionId,
+    ] as const,
+    queryFn: async () => {
+      const orderExpr =
+        metric === "cpu_microseconds"
+          ? "ProfileEvents['OSCPUVirtualTimeMicroseconds']"
+          : "memory_usage";
+      // *_str suffix on aliased columns so they don't shadow the source
+      // DateTime/String columns referenced in WHERE / ORDER BY — ClickHouse
+      // 24.11 fails with NO_COMMON_TYPE on alias-column collisions.
+      const sql = `
+        SELECT
+          query_id,
+          user,
+          substring(query, 1, 200) AS query_preview,
+          formatDateTime(event_time, '%Y-%m-%d %H:%i:%S') AS event_time_str,
+          query_duration_ms,
+          memory_usage,
+          ProfileEvents['OSCPUVirtualTimeMicroseconds'] AS cpu_microseconds,
+          read_rows,
+          read_bytes,
+          length(thread_ids) AS thread_count,
+          type
+        FROM system.query_log
+        WHERE ${timeWindowWhere(hoursBack, customRange)}
+          AND type IN ('QueryFinish', 'ExceptionWhileProcessing', 'ExceptionBeforeStart')
+        ORDER BY ${orderExpr} DESC
+        LIMIT ${limit}
+      `;
+      const result = await queryApi.executeQuery(sql);
+      return (result.data as Array<Record<string, unknown>>).map((row) => ({
+        query_id: String(row.query_id ?? ""),
+        user: String(row.user ?? ""),
+        query: String(row.query_preview ?? ""),
+        event_time: String(row.event_time_str ?? ""),
+        query_duration_ms: num(row.query_duration_ms),
+        memory_usage: num(row.memory_usage),
+        cpu_microseconds: num(row.cpu_microseconds),
+        read_rows: num(row.read_rows),
+        read_bytes: num(row.read_bytes),
+        thread_count: num(row.thread_count),
+        type: String(row.type ?? ""),
+      }));
+    },
+    staleTime: 30_000,
+    ...options,
+  });
+}
+
+export function useTopMemoryQueries(
+  hoursBack: number = 1,
+  limit: number = 10,
+  customRange?: AbsoluteRange,
+  options?: Partial<UseQueryOptions<TopResourceQueryRow[], Error>>
+) {
+  return useTopResourceQueries("memory_usage", hoursBack, limit, customRange, options);
+}
+
+export function useTopCpuQueries(
+  hoursBack: number = 1,
+  limit: number = 10,
+  customRange?: AbsoluteRange,
+  options?: Partial<UseQueryOptions<TopResourceQueryRow[], Error>>
+) {
+  return useTopResourceQueries("cpu_microseconds", hoursBack, limit, customRange, options);
+}
+
+export interface MemoryExceptionSummary {
+  oom_count: number;            // exception_code = 241 (MEMORY_LIMIT_EXCEEDED)
+  too_many_rows: number;        // exception_code = 158 (TOO_MANY_ROWS)
+  timeout_count: number;        // exception_code = 159 (TIMEOUT_EXCEEDED)
+  total_exceptions: number;
+  worst_memory_attempt_bytes: number;  // peak memory_usage among OOM-failed queries
+}
+
+/**
+ * Memory-related failure roll-up over the window. OOMs are the loudest
+ * "memory is too tight / a query is hostile" signal; pairing with the
+ * worst-attempt memory_usage of the failed queries tells you whether to
+ * raise max_memory_usage or kill the query.
+ */
+export function useMemoryExceptionSummary(
+  hoursBack: number = 1,
+  customRange?: AbsoluteRange,
+  options?: Partial<UseQueryOptions<MemoryExceptionSummary, Error>>
+) {
+  const { activeConnectionId } = useAuthStore();
+
+  return useQuery({
+    queryKey: [
+      "memoryExceptionSummary",
+      hoursBack,
+      customRange?.start ?? null,
+      customRange?.end ?? null,
+      activeConnectionId,
+    ] as const,
+    queryFn: async () => {
+      const sql = `
+        SELECT
+          countIf(exception_code = 241) AS oom_count,
+          countIf(exception_code = 158) AS too_many_rows,
+          countIf(exception_code = 159) AS timeout_count,
+          countIf(type IN ('ExceptionWhileProcessing', 'ExceptionBeforeStart')) AS total_exceptions,
+          maxIf(memory_usage, exception_code = 241) AS worst_memory_attempt_bytes
+        FROM system.query_log
+        WHERE ${timeWindowWhere(hoursBack, customRange)}
+      `;
+      const result = await queryApi.executeQuery(sql);
+      const row = (result.data as Array<Record<string, unknown>>)[0] ?? {};
+      return {
+        oom_count: num(row.oom_count),
+        too_many_rows: num(row.too_many_rows),
+        timeout_count: num(row.timeout_count),
+        total_exceptions: num(row.total_exceptions),
+        worst_memory_attempt_bytes: num(row.worst_memory_attempt_bytes),
+      };
+    },
+    staleTime: 30_000,
+    ...options,
+  });
+}
+
+export interface BackgroundPoolSaturation {
+  merges_mutations_running: number;     // BackgroundMergesAndMutationsPoolTask
+  schedule_pool_running: number;        // BackgroundSchedulePoolTask
+  common_pool_running: number;          // BackgroundCommonPoolTask
+  buffer_flush_running: number;         // BackgroundBufferFlushSchedulePoolTask
+  distributed_running: number;          // BackgroundDistributedSchedulePoolTask
+  fetches_running: number;              // BackgroundFetchesPoolTask
+  global_threads: number;               // GlobalThread
+  query_threads_active: number;         // CurrentMetric_Query × thread_count proxy
+}
+
+/**
+ * Live snapshot of every background pool ClickHouse runs. Useful when
+ * merges queue up faster than they finish (merges_mutations_running pinned
+ * high), or when the schedule pool saturates and replicated table
+ * coordination starts lagging.
+ */
+export function useBackgroundPoolSaturation(
+  options?: Partial<UseQueryOptions<BackgroundPoolSaturation, Error>>
+) {
+  const { activeConnectionId } = useAuthStore();
+
+  return useQuery({
+    queryKey: ["backgroundPoolSaturation", activeConnectionId] as const,
+    queryFn: async () => {
+      const sql = `
+        SELECT
+          (SELECT value FROM system.metrics WHERE metric = 'BackgroundMergesAndMutationsPoolTask' LIMIT 1) AS merges_mutations_running,
+          (SELECT value FROM system.metrics WHERE metric = 'BackgroundSchedulePoolTask' LIMIT 1) AS schedule_pool_running,
+          (SELECT value FROM system.metrics WHERE metric = 'BackgroundCommonPoolTask' LIMIT 1) AS common_pool_running,
+          (SELECT value FROM system.metrics WHERE metric = 'BackgroundBufferFlushSchedulePoolTask' LIMIT 1) AS buffer_flush_running,
+          (SELECT value FROM system.metrics WHERE metric = 'BackgroundDistributedSchedulePoolTask' LIMIT 1) AS distributed_running,
+          (SELECT value FROM system.metrics WHERE metric = 'BackgroundFetchesPoolTask' LIMIT 1) AS fetches_running,
+          (SELECT value FROM system.metrics WHERE metric = 'GlobalThread' LIMIT 1) AS global_threads,
+          (SELECT value FROM system.metrics WHERE metric = 'Query' LIMIT 1) AS query_threads_active
+      `;
+      const result = await queryApi.executeQuery(sql);
+      const row = (result.data as Array<Record<string, unknown>>)[0] ?? {};
+      return {
+        merges_mutations_running: num(row.merges_mutations_running),
+        schedule_pool_running: num(row.schedule_pool_running),
+        common_pool_running: num(row.common_pool_running),
+        buffer_flush_running: num(row.buffer_flush_running),
+        distributed_running: num(row.distributed_running),
+        fetches_running: num(row.fetches_running),
+        global_threads: num(row.global_threads),
+        query_threads_active: num(row.query_threads_active),
+      };
+    },
+    staleTime: 10_000,
+    ...options,
+  });
+}
+
 const SCHEMA_SYSTEM_EXCLUDE =
   "database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')";
 
