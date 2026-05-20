@@ -51,10 +51,16 @@
   --ink-700: #d6d3cd;     /* stronger border */
   --ink-800: #a8a29e;
 
+  /*
+   * Paper scale tuned for readability on warm-white cards. paper-faint sits
+   * one step darker than dark mode's equivalent because stone-400 on white
+   * is below 3:1 contrast — text gets invisible on the heavily-used label /
+   * meta lines.
+   */
   --paper: #1c1917;       /* primary text — stone-900 */
-  --paper-muted: #57534e;
-  --paper-dim: #78716c;
-  --paper-faint: #a8a29e;
+  --paper-muted: #44403c; /* stone-700 — labels, meta */
+  --paper-dim: #57534e;   /* stone-600 — eyebrows, captions */
+  --paper-faint: #78716c; /* stone-500 — quietest, still ≥4.5:1 on warm white */
 
   /* Brand — amber-shifted for light mode, less neon on white */
   --brand: #d4a300;
