@@ -663,10 +663,10 @@ export default function ConnectionManagement() {
               </TableHeader>
               <TableBody>
                 {connections.map((conn) => (
-                  <TableRow key={conn.id} className="border-gray-800">
+                  <TableRow key={conn.id} className="border-ink-500">
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-white">{conn.name}</span>
+                        <span className="font-medium text-paper">{conn.name}</span>
                         {conn.isDefault && (
                           <span className="inline-flex items-center gap-1 rounded-xs border border-brand/40 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-brand">
                             <Star className="h-3 w-3 fill-brand" />
@@ -676,11 +676,11 @@ export default function ConnectionManagement() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-1 text-gray-300">
+                      <div className="flex items-center gap-1 text-paper-muted">
                         {conn.sslEnabled && (
                           <Tooltip>
                             <TooltipTrigger>
-                              <Lock className="w-3 h-3 text-green-400" />
+                              <Lock className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
                             </TooltipTrigger>
                             <TooltipContent>SSL Enabled</TooltipContent>
                           </Tooltip>
@@ -690,7 +690,7 @@ export default function ConnectionManagement() {
                         </span>
                       </div>
                     </TableCell>
-                    <TableCell className="text-gray-300">{conn.username}</TableCell>
+                    <TableCell className="text-paper-muted">{conn.username}</TableCell>
                     <TableCell className="text-paper-muted">
                       {conn.database || <span className="text-paper-faint">default</span>}
                     </TableCell>
