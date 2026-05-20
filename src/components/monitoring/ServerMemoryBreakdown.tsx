@@ -13,25 +13,44 @@ import { cn, formatBytes } from "@/lib/utils";
 export function ServerMemoryBreakdown() {
   const { data, isLoading, error } = useServerMemoryBreakdown();
 
-  const slices = useMemo(() => {
+  const named = useMemo(() => {
     if (!data) return [];
-    const rss = data.clickhouse_rss_bytes;
-    if (rss <= 0) return [];
-    const named = [
-      { key: "active", label: "Active queries", value: data.active_queries_bytes, color: "#ffcc01" },
-      { key: "mark", label: "Mark cache", value: data.mark_cache_bytes, color: "#34d399" },
-      { key: "uncomp", label: "Uncompressed cache", value: data.uncompressed_cache_bytes, color: "#22d3ee" },
-      { key: "merges", label: "Merges / mutations", value: data.merges_mutations_bytes, color: "#f59e0b" },
-      { key: "pk", label: "Primary keys", value: data.primary_key_bytes, color: "#a855f7" },
-      { key: "idx", label: "Index granularity", value: data.index_granularity_bytes, color: "#ec4899" },
-    ];
-    const accounted = named.reduce((sum, s) => sum + Math.max(0, s.value), 0);
-    const other = Math.max(0, rss - accounted);
     return [
-      ...named.map((s) => ({ ...s, value: Math.max(0, s.value) })),
-      { key: "other", label: "Other (runtime + bg)", value: other, color: "#94a3b8" },
+      { key: "active", label: "Active queries", value: Math.max(0, data.active_queries_bytes), color: "#ffcc01" },
+      { key: "mark", label: "Mark cache", value: Math.max(0, data.mark_cache_bytes), color: "#34d399" },
+      { key: "uncomp", label: "Uncompressed cache", value: Math.max(0, data.uncompressed_cache_bytes), color: "#22d3ee" },
+      { key: "merges", label: "Merges / mutations", value: Math.max(0, data.merges_mutations_bytes), color: "#f59e0b" },
+      { key: "pk", label: "Primary keys", value: Math.max(0, data.primary_key_bytes), color: "#a855f7" },
+      { key: "idx", label: "Index granularity", value: Math.max(0, data.index_granularity_bytes), color: "#ec4899" },
     ];
   }, [data]);
+
+  const accounted = useMemo(
+    () => named.reduce((sum, s) => sum + s.value, 0),
+    [named]
+  );
+
+  // Three flavors of "used" — pick the most authoritative available so the
+  // card still works on servers that hide one or both system tables:
+  //   1. ClickHouse RSS from system.asynchronous_metrics (most accurate)
+  //   2. Sum of the per-component slices (fallback — undercount, but real)
+  const rss = data?.clickhouse_rss_bytes ?? 0;
+  const used = rss > 0 ? rss : accounted;
+
+  const slices = useMemo(() => {
+    if (named.length === 0) return [];
+    // If we have RSS, the "Other" bucket is RSS minus accounted slices
+    // (runtime, thread stacks, allocator overhead). If we don't have RSS,
+    // we can't compute "Other" — leave it off so the legend doesn't lie.
+    if (rss > 0) {
+      const other = Math.max(0, rss - accounted);
+      return [
+        ...named,
+        { key: "other", label: "Other (runtime + bg)", value: other, color: "#94a3b8" },
+      ];
+    }
+    return named;
+  }, [named, rss, accounted]);
 
   if (isLoading) {
     return (
@@ -43,7 +62,9 @@ export function ServerMemoryBreakdown() {
     );
   }
 
-  if (error || !data || data.total_bytes === 0) {
+  // Empty only when we genuinely have nothing — no server total, no RSS,
+  // no attributable slices. Otherwise render whatever subset we have.
+  if (error || !data || (data.total_bytes === 0 && rss === 0 && accounted === 0)) {
     return (
       <div className="flex flex-col gap-3 rounded-xs border border-ink-500 bg-ink-100 px-4 py-4">
         <Header />
@@ -54,10 +75,10 @@ export function ServerMemoryBreakdown() {
     );
   }
 
-  const used = data.clickhouse_rss_bytes;
   const total = data.total_bytes;
-  const free = Math.max(0, total - used);
-  const usedPct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
+  const hasServerTotal = total > 0;
+  const free = hasServerTotal ? Math.max(0, total - used) : 0;
+  const usedPct = hasServerTotal ? Math.min(100, (used / total) * 100) : 0;
   const usedPctRounded = Math.round(usedPct);
 
   // Stacked bar segments — each slice as % of ClickHouse RSS
@@ -67,26 +88,45 @@ export function ServerMemoryBreakdown() {
     <div className="flex flex-col gap-4 rounded-xs border border-ink-500 bg-ink-100 px-4 py-4">
       <Header />
 
-      {/* Top: server-level totals */}
-      <div className="grid grid-cols-3 gap-3 border-y border-ink-500 py-3">
-        <Stat label="Server RAM" value={formatBytes(total)} />
-        <Stat
-          label="Used by ClickHouse"
-          value={formatBytes(used)}
-          hint={`${usedPctRounded}% of total`}
-          emphasis
-        />
-        <Stat label="Free for OS" value={formatBytes(free)} />
-      </div>
+      {/* Top: server-level totals. Falls back to a single tile when the
+          server hides OSMemoryTotal (restricted system.asynchronous_metrics
+          access on managed CH, hardened deploys, etc.) so we still surface
+          the RSS that did come back. */}
+      {hasServerTotal ? (
+        <div className="grid grid-cols-3 gap-3 border-y border-ink-500 py-3">
+          <Stat label="Server RAM" value={formatBytes(total)} />
+          <Stat
+            label="Used by ClickHouse"
+            value={formatBytes(used)}
+            hint={`${usedPctRounded}% of total`}
+            emphasis
+          />
+          <Stat label="Free for OS" value={formatBytes(free)} />
+        </div>
+      ) : (
+        <div className="flex items-end justify-between gap-3 border-y border-ink-500 py-3">
+          <Stat
+            label={rss > 0 ? "Used by ClickHouse" : "Attributed memory"}
+            value={formatBytes(used)}
+            hint={rss > 0 ? undefined : "Server total unavailable on this server"}
+            emphasis
+          />
+          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">
+            OSMemoryTotal not exposed
+          </span>
+        </div>
+      )}
 
       {/* Breakdown bar */}
       <div className="flex flex-col gap-3">
         <div className="flex items-baseline justify-between">
           <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-faint">
-            What ClickHouse is using {formatBytes(used)} for
+            {rss > 0
+              ? `What ClickHouse is using ${formatBytes(used)} for`
+              : `Attributed slices · ${formatBytes(used)}`}
           </span>
           <span className="font-mono text-[10px] text-paper-faint">
-            sum of slices · {formatBytes(totalForBar)}
+            sum · {formatBytes(totalForBar)}
           </span>
         </div>
         <div className="flex h-3 w-full overflow-hidden rounded-xs border border-ink-500 bg-ink-200">
