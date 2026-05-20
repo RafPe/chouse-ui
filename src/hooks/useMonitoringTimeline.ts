@@ -630,18 +630,22 @@ export function useMutations(
   return useQuery({
     queryKey: ["mutations", activeConnectionId] as const,
     queryFn: async () => {
+      // Aliases use a `_str` suffix so they don't shadow the original
+      // DateTime columns used in WHERE / ORDER BY. ClickHouse 24.11 fails
+      // with NO_COMMON_TYPE (String vs DateTime) when an alias collides
+      // with the column it was derived from in the same SELECT.
       const sql = `
         SELECT
           database,
           table,
           mutation_id,
           command,
-          formatDateTime(create_time, '%Y-%m-%d %H:%i:%S') AS create_time,
+          formatDateTime(create_time, '%Y-%m-%d %H:%i:%S') AS create_time_str,
           parts_to_do,
           is_done,
           latest_failed_part,
           latest_fail_reason,
-          formatDateTime(latest_fail_time, '%Y-%m-%d %H:%i:%S') AS latest_fail_time
+          formatDateTime(latest_fail_time, '%Y-%m-%d %H:%i:%S') AS latest_fail_time_str
         FROM system.mutations
         WHERE is_done = 0 OR create_time >= now() - INTERVAL 7 DAY
         ORDER BY is_done ASC, create_time DESC
@@ -653,12 +657,12 @@ export function useMutations(
         table: String(row.table ?? ""),
         mutation_id: String(row.mutation_id ?? ""),
         command: String(row.command ?? ""),
-        create_time: String(row.create_time ?? ""),
+        create_time: String(row.create_time_str ?? ""),
         parts_to_do: num(row.parts_to_do),
         is_done: num(row.is_done),
         latest_failed_part: String(row.latest_failed_part ?? ""),
         latest_fail_reason: String(row.latest_fail_reason ?? ""),
-        latest_fail_time: String(row.latest_fail_time ?? ""),
+        latest_fail_time: String(row.latest_fail_time_str ?? ""),
       }));
     },
     staleTime: 30_000,
@@ -692,6 +696,8 @@ export function useReplicationQueue(
   return useQuery({
     queryKey: ["replicationQueue", activeConnectionId] as const,
     queryFn: async () => {
+      // Same alias-shadowing trap as useMutations — DateTime aliases get a
+      // `_str` suffix so WHERE / ORDER BY keep the original DateTime column.
       const sql = `
         SELECT
           database,
@@ -701,10 +707,10 @@ export function useReplicationQueue(
           source_replica,
           new_part_name,
           length(parts_to_merge) AS parts_to_merge,
-          formatDateTime(last_attempt_time, '%Y-%m-%d %H:%i:%S') AS last_attempt_time,
+          formatDateTime(last_attempt_time, '%Y-%m-%d %H:%i:%S') AS last_attempt_time_str,
           num_tries,
           last_exception,
-          formatDateTime(create_time, '%Y-%m-%d %H:%i:%S') AS create_time
+          formatDateTime(create_time, '%Y-%m-%d %H:%i:%S') AS create_time_str
         FROM system.replication_queue
         ORDER BY num_tries DESC, create_time DESC
         LIMIT 500
@@ -718,10 +724,10 @@ export function useReplicationQueue(
         source_replica: String(row.source_replica ?? ""),
         new_part_name: String(row.new_part_name ?? ""),
         parts_to_merge: num(row.parts_to_merge),
-        last_attempt_time: String(row.last_attempt_time ?? ""),
+        last_attempt_time: String(row.last_attempt_time_str ?? ""),
         num_tries: num(row.num_tries),
         last_exception: String(row.last_exception ?? ""),
-        create_time: String(row.create_time ?? ""),
+        create_time: String(row.create_time_str ?? ""),
       }));
     },
     staleTime: 30_000,
