@@ -256,6 +256,111 @@ export function useQueryPatterns(
   });
 }
 
+export interface ByRedashRow {
+  redash_query_id: string;        // numeric id pulled from /* … query_id: N … */
+  redash_username: string;        // pulled from /* … Username: … */, anyLast
+  executions: number;
+  min_duration_ms: number;
+  avg_duration_ms: number;
+  max_duration_ms: number;
+  total_duration_ms: number;
+  min_memory: number;
+  avg_memory: number;
+  max_memory: number;
+  total_read_rows: number;
+  total_read_bytes: number;
+  sample_query_id: string;        // ClickHouse query_id (for drill-down)
+}
+
+export type ByRedashSort =
+  | "total_duration_ms"
+  | "executions"
+  | "min_duration_ms"
+  | "avg_duration_ms"
+  | "max_duration_ms"
+  | "min_memory"
+  | "max_memory"
+  | "total_read_rows"
+  | "total_read_bytes";
+
+/**
+ * Aggregate queries by the Redash query_id embedded in the SQL leading
+ * comment. Redash submits queries with
+ *   /* Username: ..., query_id: NNNN, Queue: ..., Job ID: ... *\/
+ * so we can roll up every execution of the same saved Redash query
+ * (across schedules, ad-hoc reruns, snapshot fetches) into one row.
+ * Filters out queries with no matching comment so the result is purely
+ * "things Redash sent".
+ */
+export function useQueryByRedashId(
+  hoursBack: number = 6,
+  sortBy: ByRedashSort = "total_duration_ms",
+  limit: number = 500,
+  customRange?: AbsoluteRange,
+  options?: Partial<UseQueryOptions<ByRedashRow[], Error>>
+) {
+  const { activeConnectionId } = useAuthStore();
+
+  return useQuery({
+    queryKey: [
+      "queryByRedashId",
+      hoursBack,
+      sortBy,
+      limit,
+      customRange?.start ?? null,
+      customRange?.end ?? null,
+      activeConnectionId,
+    ] as const,
+    queryFn: async () => {
+      // Aliases use _str suffix where they shadow source columns — same
+      // alias-shadow trap we hit on Mutations / Replication earlier on
+      // ClickHouse 24.11 (NO_COMMON_TYPE String vs DateTime).
+      const sql = `
+        SELECT
+          extract(query, 'query_id:\\\\s*(\\\\d+)') AS redash_query_id,
+          anyLast(trim(extract(query, 'Username:\\\\s*([^,]+)'))) AS redash_username,
+          count() AS executions,
+          min(query_duration_ms) AS min_duration_ms,
+          avg(query_duration_ms) AS avg_duration_ms,
+          max(query_duration_ms) AS max_duration_ms,
+          sum(query_duration_ms) AS total_duration_ms,
+          min(memory_usage) AS min_memory,
+          avg(memory_usage) AS avg_memory,
+          max(memory_usage) AS max_memory,
+          sum(read_rows) AS total_read_rows,
+          sum(read_bytes) AS total_read_bytes,
+          anyLast(query_id) AS sample_query_id
+        FROM system.query_log
+        WHERE ${timeWindowWhere(hoursBack, customRange)}
+          AND type IN ('QueryFinish', 'ExceptionWhileProcessing', 'ExceptionBeforeStart')
+          AND query LIKE '%query_id:%'
+        GROUP BY redash_query_id
+        HAVING redash_query_id != ''
+        ORDER BY ${sortBy} DESC
+        LIMIT ${limit}
+      `;
+      const result = await queryApi.executeQuery(sql);
+      return (result.data as Array<Record<string, unknown>>).map((row) => ({
+        redash_query_id: String(row.redash_query_id ?? ""),
+        redash_username: String(row.redash_username ?? ""),
+        executions: num(row.executions),
+        min_duration_ms: num(row.min_duration_ms),
+        avg_duration_ms: num(row.avg_duration_ms),
+        max_duration_ms: num(row.max_duration_ms),
+        total_duration_ms: num(row.total_duration_ms),
+        min_memory: num(row.min_memory),
+        avg_memory: num(row.avg_memory),
+        max_memory: num(row.max_memory),
+        total_read_rows: num(row.total_read_rows),
+        total_read_bytes: num(row.total_read_bytes),
+        sample_query_id: String(row.sample_query_id ?? ""),
+      }));
+    },
+    staleTime: 30_000,
+    ...options,
+  });
+}
+
 export interface ProfileEventEntry {
   name: string;
   value: number;
@@ -548,6 +653,61 @@ export function useQueryHistogram(
   });
 }
 
+export interface QueryPercentiles {
+  p50: number;
+  p95: number;
+  p99: number;
+  max: number;
+}
+
+/**
+ * p50 / p95 / p99 / max of the chosen metric for the active time window.
+ * Lets operators eyeball tail latency / memory / scan size without doing
+ * the math themselves — complements the histogram, which only shows shape.
+ */
+export function useQueryPercentiles(
+  metric: HistogramMetric,
+  hoursBack: number = 6,
+  customRange?: AbsoluteRange,
+  options?: Partial<UseQueryOptions<QueryPercentiles, Error>>
+) {
+  const { activeConnectionId } = useAuthStore();
+  const spec = HISTOGRAM_SPECS[metric];
+
+  return useQuery({
+    queryKey: [
+      "queryPercentiles",
+      metric,
+      hoursBack,
+      customRange?.start ?? null,
+      customRange?.end ?? null,
+      activeConnectionId,
+    ] as const,
+    queryFn: async () => {
+      const sql = `
+        SELECT
+          quantile(0.50)(${spec.field}) AS p50,
+          quantile(0.95)(${spec.field}) AS p95,
+          quantile(0.99)(${spec.field}) AS p99,
+          max(${spec.field}) AS mx
+        FROM system.query_log
+        WHERE ${timeWindowWhere(hoursBack, customRange)}
+          AND type IN ('QueryFinish', 'ExceptionWhileProcessing', 'ExceptionBeforeStart')
+      `;
+      const result = await queryApi.executeQuery(sql);
+      const row = (result.data as Array<Record<string, unknown>>)[0] ?? {};
+      return {
+        p50: num(row.p50),
+        p95: num(row.p95),
+        p99: num(row.p99),
+        max: num(row.mx),
+      };
+    },
+    staleTime: 30_000,
+    ...options,
+  });
+}
+
 export interface MutationRow {
   database: string;
   table: string;
@@ -575,18 +735,22 @@ export function useMutations(
   return useQuery({
     queryKey: ["mutations", activeConnectionId] as const,
     queryFn: async () => {
+      // Aliases use a `_str` suffix so they don't shadow the original
+      // DateTime columns used in WHERE / ORDER BY. ClickHouse 24.11 fails
+      // with NO_COMMON_TYPE (String vs DateTime) when an alias collides
+      // with the column it was derived from in the same SELECT.
       const sql = `
         SELECT
           database,
           table,
           mutation_id,
           command,
-          formatDateTime(create_time, '%Y-%m-%d %H:%i:%S') AS create_time,
+          formatDateTime(create_time, '%Y-%m-%d %H:%i:%S') AS create_time_str,
           parts_to_do,
           is_done,
           latest_failed_part,
           latest_fail_reason,
-          formatDateTime(latest_fail_time, '%Y-%m-%d %H:%i:%S') AS latest_fail_time
+          formatDateTime(latest_fail_time, '%Y-%m-%d %H:%i:%S') AS latest_fail_time_str
         FROM system.mutations
         WHERE is_done = 0 OR create_time >= now() - INTERVAL 7 DAY
         ORDER BY is_done ASC, create_time DESC
@@ -598,12 +762,12 @@ export function useMutations(
         table: String(row.table ?? ""),
         mutation_id: String(row.mutation_id ?? ""),
         command: String(row.command ?? ""),
-        create_time: String(row.create_time ?? ""),
+        create_time: String(row.create_time_str ?? ""),
         parts_to_do: num(row.parts_to_do),
         is_done: num(row.is_done),
         latest_failed_part: String(row.latest_failed_part ?? ""),
         latest_fail_reason: String(row.latest_fail_reason ?? ""),
-        latest_fail_time: String(row.latest_fail_time ?? ""),
+        latest_fail_time: String(row.latest_fail_time_str ?? ""),
       }));
     },
     staleTime: 30_000,
@@ -637,6 +801,8 @@ export function useReplicationQueue(
   return useQuery({
     queryKey: ["replicationQueue", activeConnectionId] as const,
     queryFn: async () => {
+      // Same alias-shadowing trap as useMutations — DateTime aliases get a
+      // `_str` suffix so WHERE / ORDER BY keep the original DateTime column.
       const sql = `
         SELECT
           database,
@@ -646,10 +812,10 @@ export function useReplicationQueue(
           source_replica,
           new_part_name,
           length(parts_to_merge) AS parts_to_merge,
-          formatDateTime(last_attempt_time, '%Y-%m-%d %H:%i:%S') AS last_attempt_time,
+          formatDateTime(last_attempt_time, '%Y-%m-%d %H:%i:%S') AS last_attempt_time_str,
           num_tries,
           last_exception,
-          formatDateTime(create_time, '%Y-%m-%d %H:%i:%S') AS create_time
+          formatDateTime(create_time, '%Y-%m-%d %H:%i:%S') AS create_time_str
         FROM system.replication_queue
         ORDER BY num_tries DESC, create_time DESC
         LIMIT 500
@@ -663,13 +829,178 @@ export function useReplicationQueue(
         source_replica: String(row.source_replica ?? ""),
         new_part_name: String(row.new_part_name ?? ""),
         parts_to_merge: num(row.parts_to_merge),
-        last_attempt_time: String(row.last_attempt_time ?? ""),
+        last_attempt_time: String(row.last_attempt_time_str ?? ""),
         num_tries: num(row.num_tries),
         last_exception: String(row.last_exception ?? ""),
-        create_time: String(row.create_time ?? ""),
+        create_time: String(row.create_time_str ?? ""),
       }));
     },
     staleTime: 30_000,
+    ...options,
+  });
+}
+
+export interface ReplicaStatusRow {
+  database: string;
+  table: string;
+  replica_name: string;
+  absolute_delay: number;       // seconds behind leader
+  queue_size: number;           // length(log_max_index - log_pointer)
+  is_readonly: number;
+  is_session_expired: number;
+}
+
+/**
+ * Per-replica lag and pending work from system.replicas. A non-zero
+ * absolute_delay or rising queue_size on a single replica is the canonical
+ * "this replica is behind / stuck" signal.
+ */
+export function useReplicaStatus(
+  options?: Partial<UseQueryOptions<ReplicaStatusRow[], Error>>
+) {
+  const { activeConnectionId } = useAuthStore();
+
+  return useQuery({
+    queryKey: ["replicaStatus", activeConnectionId] as const,
+    queryFn: async () => {
+      const sql = `
+        SELECT
+          database,
+          table,
+          replica_name,
+          absolute_delay,
+          (log_max_index - log_pointer) AS queue_size,
+          is_readonly,
+          is_session_expired
+        FROM system.replicas
+        ORDER BY absolute_delay DESC, queue_size DESC
+        LIMIT 200
+      `;
+      const result = await queryApi.executeQuery(sql);
+      return (result.data as Array<Record<string, unknown>>).map((row) => ({
+        database: String(row.database ?? ""),
+        table: String(row.table ?? ""),
+        replica_name: String(row.replica_name ?? ""),
+        absolute_delay: num(row.absolute_delay),
+        queue_size: num(row.queue_size),
+        is_readonly: num(row.is_readonly),
+        is_session_expired: num(row.is_session_expired),
+      }));
+    },
+    staleTime: 15_000,
+    ...options,
+  });
+}
+
+export interface BlockedTaskSummary {
+  long_running_queries: number;  // system.processes elapsed > 60s
+  long_running_merges: number;   // system.merges elapsed > 300s
+  open_mutations: number;        // system.mutations is_done = 0
+  sick_replicas: number;         // system.replicas absolute_delay > 60 OR is_readonly
+  max_replica_lag_seconds: number;
+  server_memory_used_bytes: number;   // system.asynchronous_metrics MemoryResident
+  server_memory_total_bytes: number;  // system.asynchronous_metrics OSMemoryTotal
+}
+
+/**
+ * Roll-up of "this thing is blocked / stuck" signals across the cluster +
+ * server-wide memory pressure (resident / total). One SQL call so the
+ * indicator strip stays cheap to poll.
+ */
+export function useBlockedTaskSummary(
+  options?: Partial<UseQueryOptions<BlockedTaskSummary, Error>>
+) {
+  const { activeConnectionId } = useAuthStore();
+
+  return useQuery({
+    queryKey: ["blockedTaskSummary", activeConnectionId] as const,
+    queryFn: async () => {
+      const sql = `
+        SELECT
+          (SELECT count() FROM system.processes WHERE elapsed > 60) AS long_running_queries,
+          (SELECT count() FROM system.merges WHERE elapsed > 300) AS long_running_merges,
+          (SELECT count() FROM system.mutations WHERE is_done = 0) AS open_mutations,
+          (SELECT count() FROM system.replicas WHERE absolute_delay > 60 OR is_readonly = 1) AS sick_replicas,
+          (SELECT max(absolute_delay) FROM system.replicas) AS max_replica_lag_seconds,
+          (SELECT value FROM system.asynchronous_metrics WHERE metric = 'MemoryResident' LIMIT 1) AS server_memory_used_bytes,
+          (SELECT value FROM system.asynchronous_metrics WHERE metric = 'OSMemoryTotal' LIMIT 1) AS server_memory_total_bytes
+      `;
+      const result = await queryApi.executeQuery(sql);
+      const row = (result.data as Array<Record<string, unknown>>)[0] ?? {};
+      return {
+        long_running_queries: num(row.long_running_queries),
+        long_running_merges: num(row.long_running_merges),
+        open_mutations: num(row.open_mutations),
+        sick_replicas: num(row.sick_replicas),
+        max_replica_lag_seconds: num(row.max_replica_lag_seconds),
+        server_memory_used_bytes: num(row.server_memory_used_bytes),
+        server_memory_total_bytes: num(row.server_memory_total_bytes),
+      };
+    },
+    staleTime: 15_000,
+    ...options,
+  });
+}
+
+export interface ServerMemoryBreakdown {
+  total_bytes: number;            // OSMemoryTotal — physical RAM on the box
+  available_bytes: number;        // OSMemoryAvailable — free + cacheable
+  clickhouse_rss_bytes: number;   // MemoryResident — actual ClickHouse RSS
+  active_queries_bytes: number;   // SUM(memory_usage) FROM system.processes
+  merges_mutations_bytes: number; // CurrentMetric_MergesMutationsMemoryTracking
+  mark_cache_bytes: number;       // CurrentMetric_MarkCacheBytes
+  uncompressed_cache_bytes: number; // CurrentMetric_UncompressedCacheBytes
+  primary_key_bytes: number;      // TotalPrimaryKeyBytesInMemoryAllocated
+  index_granularity_bytes: number;// TotalIndexGranularityBytesInMemoryAllocated
+}
+
+/**
+ * One-shot snapshot of the "where did the RAM go?" question. Surfaces the
+ * RSS that ClickHouse actually holds, the slices we can attribute (caches,
+ * merges, in-flight queries, index data structures), and the OS-level
+ * total/free numbers so the page can show "X of Y used, here's why".
+ *
+ * Every component is read from a separate scalar subquery so the call
+ * gracefully reports 0 for any metric the server build doesn't expose,
+ * instead of dropping the whole row.
+ */
+export function useServerMemoryBreakdown(
+  options?: Partial<UseQueryOptions<ServerMemoryBreakdown, Error>>
+) {
+  const { activeConnectionId } = useAuthStore();
+
+  return useQuery({
+    queryKey: ["serverMemoryBreakdown", activeConnectionId] as const,
+    queryFn: async () => {
+      // Scalar subqueries individually — each returns NULL if the metric or
+      // table is absent, and num(NULL) → 0 keeps the math sane.
+      const sql = `
+        SELECT
+          (SELECT value FROM system.asynchronous_metrics WHERE metric = 'OSMemoryTotal' LIMIT 1) AS total_bytes,
+          (SELECT value FROM system.asynchronous_metrics WHERE metric = 'OSMemoryAvailable' LIMIT 1) AS available_bytes,
+          (SELECT value FROM system.asynchronous_metrics WHERE metric = 'MemoryResident' LIMIT 1) AS clickhouse_rss_bytes,
+          (SELECT sum(memory_usage) FROM system.processes) AS active_queries_bytes,
+          (SELECT value FROM system.metrics WHERE metric = 'MergesMutationsMemoryTracking' LIMIT 1) AS merges_mutations_bytes,
+          (SELECT value FROM system.metrics WHERE metric = 'MarkCacheBytes' LIMIT 1) AS mark_cache_bytes,
+          (SELECT value FROM system.metrics WHERE metric = 'UncompressedCacheBytes' LIMIT 1) AS uncompressed_cache_bytes,
+          (SELECT value FROM system.asynchronous_metrics WHERE metric = 'TotalPrimaryKeyBytesInMemoryAllocated' LIMIT 1) AS primary_key_bytes,
+          (SELECT value FROM system.asynchronous_metrics WHERE metric = 'TotalIndexGranularityBytesInMemoryAllocated' LIMIT 1) AS index_granularity_bytes
+      `;
+      const result = await queryApi.executeQuery(sql);
+      const row = (result.data as Array<Record<string, unknown>>)[0] ?? {};
+      return {
+        total_bytes: num(row.total_bytes),
+        available_bytes: num(row.available_bytes),
+        clickhouse_rss_bytes: num(row.clickhouse_rss_bytes),
+        active_queries_bytes: num(row.active_queries_bytes),
+        merges_mutations_bytes: num(row.merges_mutations_bytes),
+        mark_cache_bytes: num(row.mark_cache_bytes),
+        uncompressed_cache_bytes: num(row.uncompressed_cache_bytes),
+        primary_key_bytes: num(row.primary_key_bytes),
+        index_granularity_bytes: num(row.index_granularity_bytes),
+      };
+    },
+    staleTime: 15_000,
     ...options,
   });
 }
@@ -682,6 +1013,113 @@ export interface SchemaLintRow {
   total_rows: number;
   compressed_bytes: number;
   uncompressed_bytes: number;
+}
+
+export interface TopResourceQueryRow {
+  query_id: string;
+  user: string;
+  query: string;
+  event_time: string;
+  query_duration_ms: number;
+  memory_usage: number;        // peak memory_usage from system.query_log
+  cpu_microseconds: number;    // ProfileEvents['OSCPUVirtualTimeMicroseconds']
+  read_rows: number;
+  read_bytes: number;
+  thread_count: number;
+  type: string;                // QueryFinish / Exception*
+}
+
+type TopResourceMetric = "memory_usage" | "cpu_microseconds";
+
+/**
+ * Heaviest queries by a chosen resource (memory or CPU) over the window.
+ * Read from system.query_log so the result is historical, not just live —
+ * which is what an operator wants when chasing "what blew up the box at
+ * 03:00 last night". Limit kept tight; the table is a quick scan, not a
+ * paginated dataset.
+ */
+function useTopResourceQueries(
+  metric: TopResourceMetric,
+  hoursBack: number = 1,
+  limit: number = 10,
+  customRange?: AbsoluteRange,
+  options?: Partial<UseQueryOptions<TopResourceQueryRow[], Error>>
+) {
+  const { activeConnectionId } = useAuthStore();
+
+  return useQuery({
+    queryKey: [
+      "topResourceQueries",
+      metric,
+      hoursBack,
+      limit,
+      customRange?.start ?? null,
+      customRange?.end ?? null,
+      activeConnectionId,
+    ] as const,
+    queryFn: async () => {
+      const orderExpr =
+        metric === "cpu_microseconds"
+          ? "ProfileEvents['OSCPUVirtualTimeMicroseconds']"
+          : "memory_usage";
+      // *_str suffix on aliased columns so they don't shadow the source
+      // DateTime/String columns referenced in WHERE / ORDER BY — ClickHouse
+      // 24.11 fails with NO_COMMON_TYPE on alias-column collisions.
+      const sql = `
+        SELECT
+          query_id,
+          user,
+          substring(query, 1, 200) AS query_preview,
+          formatDateTime(event_time, '%Y-%m-%d %H:%i:%S') AS event_time_str,
+          query_duration_ms,
+          memory_usage,
+          ProfileEvents['OSCPUVirtualTimeMicroseconds'] AS cpu_microseconds,
+          read_rows,
+          read_bytes,
+          length(thread_ids) AS thread_count,
+          type
+        FROM system.query_log
+        WHERE ${timeWindowWhere(hoursBack, customRange)}
+          AND type IN ('QueryFinish', 'ExceptionWhileProcessing', 'ExceptionBeforeStart')
+        ORDER BY ${orderExpr} DESC
+        LIMIT ${limit}
+      `;
+      const result = await queryApi.executeQuery(sql);
+      return (result.data as Array<Record<string, unknown>>).map((row) => ({
+        query_id: String(row.query_id ?? ""),
+        user: String(row.user ?? ""),
+        query: String(row.query_preview ?? ""),
+        event_time: String(row.event_time_str ?? ""),
+        query_duration_ms: num(row.query_duration_ms),
+        memory_usage: num(row.memory_usage),
+        cpu_microseconds: num(row.cpu_microseconds),
+        read_rows: num(row.read_rows),
+        read_bytes: num(row.read_bytes),
+        thread_count: num(row.thread_count),
+        type: String(row.type ?? ""),
+      }));
+    },
+    staleTime: 30_000,
+    ...options,
+  });
+}
+
+export function useTopMemoryQueries(
+  hoursBack: number = 1,
+  limit: number = 10,
+  customRange?: AbsoluteRange,
+  options?: Partial<UseQueryOptions<TopResourceQueryRow[], Error>>
+) {
+  return useTopResourceQueries("memory_usage", hoursBack, limit, customRange, options);
+}
+
+export function useTopCpuQueries(
+  hoursBack: number = 1,
+  limit: number = 10,
+  customRange?: AbsoluteRange,
+  options?: Partial<UseQueryOptions<TopResourceQueryRow[], Error>>
+) {
+  return useTopResourceQueries("cpu_microseconds", hoursBack, limit, customRange, options);
 }
 
 const SCHEMA_SYSTEM_EXCLUDE =

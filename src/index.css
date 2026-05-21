@@ -3,29 +3,115 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* Editorial design tokens — exposed as Tailwind v4 utilities (bg-ink-50, text-paper-muted, font-mono, etc). */
+/*
+ * Editorial design tokens — exposed as Tailwind v4 utilities (bg-ink-50,
+ * text-paper-muted, font-mono, etc). The ink/paper scales are wired to
+ * CSS variables so they can flip between light and dark themes via the
+ * `.dark` class on <html>. Brand stays constant.
+ */
 @theme {
-  --color-ink-0: #000000;
-  --color-ink-50: #0a0a0a;
-  --color-ink-100: #0f0f0f;
-  --color-ink-200: #141414;
-  --color-ink-300: #1a1a1a;
-  --color-ink-400: #1f1f1f;
-  --color-ink-500: #262626;
-  --color-ink-700: #404040;
-  --color-ink-800: #525252;
+  --color-ink-0: var(--ink-0);
+  --color-ink-50: var(--ink-50);
+  --color-ink-100: var(--ink-100);
+  --color-ink-200: var(--ink-200);
+  --color-ink-300: var(--ink-300);
+  --color-ink-400: var(--ink-400);
+  --color-ink-500: var(--ink-500);
+  --color-ink-700: var(--ink-700);
+  --color-ink-800: var(--ink-800);
 
-  --color-paper: #fafafa;
-  --color-paper-muted: #a1a1aa;
-  --color-paper-dim: #71717a;
-  --color-paper-faint: #52525b;
+  --color-paper: var(--paper);
+  --color-paper-muted: var(--paper-muted);
+  --color-paper-dim: var(--paper-dim);
+  --color-paper-faint: var(--paper-faint);
 
-  --color-brand: #ffcc01;
-  --color-brand-soft: #ffe680;
-  --color-brand-dim: #a88600;
+  --color-brand: var(--brand);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-dim: var(--brand-dim);
 
   --font-sans: "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+}
+
+/*
+ * Light defaults — warm-stone palette so the page reads "paper" instead of
+ * sterile clinical white. Cards sit ABOVE the page (white on warm gray)
+ * so they lift visually, mirroring the dark mode's relationship where
+ * cards sit above the page background. Brand shifts toward amber so the
+ * ClickHouse yellow doesn't read as a highlighter on white.
+ */
+:root {
+  --ink-0: #ffffff;
+  --ink-50: #f7f6f3;      /* page bg — warm off-white */
+  --ink-100: #ffffff;     /* card bg — lifts above page */
+  --ink-200: #f4f3ef;     /* input bg / subtle hover */
+  --ink-300: #ebe9e4;     /* divider tint */
+  --ink-400: #a8a29e;
+  --ink-500: #e7e5e0;     /* hairline border */
+  --ink-700: #d6d3cd;     /* stronger border */
+  --ink-800: #a8a29e;
+
+  /*
+   * Paper scale tuned for readability on warm-white cards. paper-faint sits
+   * one step darker than dark mode's equivalent because stone-400 on white
+   * is below 3:1 contrast — text gets invisible on the heavily-used label /
+   * meta lines.
+   */
+  --paper: #1c1917;       /* primary text — stone-900 */
+  --paper-muted: #44403c; /* stone-700 — labels, meta */
+  --paper-dim: #57534e;   /* stone-600 — eyebrows, captions */
+  --paper-faint: #78716c; /* stone-500 — quietest, still ≥4.5:1 on warm white */
+
+  /* Brand — amber-shifted for light mode, less neon on white */
+  --brand: #d4a300;
+  --brand-soft: #e6ba33;
+  --brand-dim: #8a6a00;
+
+  /* Recharts + inline references — light values */
+  --chart-grid: #e7e5e0;
+  --chart-tick: #78716c;
+  --chart-tooltip-bg: #ffffff;
+  --chart-tooltip-border: #d6d3cd;
+  --chart-tooltip-text: #1c1917;
+  --chart-tooltip-label: #57534e;
+  --chart-cursor: rgba(28, 25, 23, 0.04);
+
+  --scrollbar-thumb: #d6d3cd;
+  --scrollbar-thumb-hover: #a8a29e;
+}
+
+/* Dark overrides — applied when <html> has the `.dark` class. */
+.dark {
+  --ink-0: #000000;
+  --ink-50: #0a0a0a;
+  --ink-100: #0f0f0f;
+  --ink-200: #141414;
+  --ink-300: #1a1a1a;
+  --ink-400: #1f1f1f;
+  --ink-500: #262626;
+  --ink-700: #404040;
+  --ink-800: #525252;
+
+  --paper: #fafafa;
+  --paper-muted: #a1a1aa;
+  --paper-dim: #71717a;
+  --paper-faint: #52525b;
+
+  /* Brand — full ClickHouse yellow on dark surfaces */
+  --brand: #ffcc01;
+  --brand-soft: #ffe680;
+  --brand-dim: #a88600;
+
+  --chart-grid: #262626;
+  --chart-tick: #71717a;
+  --chart-tooltip-bg: #141414;
+  --chart-tooltip-border: #262626;
+  --chart-tooltip-text: #ffffff;
+  --chart-tooltip-label: #a1a1aa;
+  --chart-cursor: rgba(255, 255, 255, 0.03);
+
+  --scrollbar-thumb: #262626;
+  --scrollbar-thumb-hover: #404040;
 }
 
 @layer base {
@@ -35,11 +121,11 @@
 
     /* Editorial scrollbar: hairline ink, slightly more visible on hover */
     scrollbar-width: thin;
-    scrollbar-color: #404040 transparent;
+    scrollbar-color: var(--scrollbar-thumb-hover) transparent;
 
     &::-webkit-scrollbar {
-      width: 10px;
-      height: 10px;
+      width: 6px;
+      height: 6px;
     }
 
     &::-webkit-scrollbar-track {
@@ -47,15 +133,16 @@
     }
 
     &::-webkit-scrollbar-thumb {
-      background-color: #262626;
-      border: 2px solid transparent;
-      background-clip: content-box;
-      border-radius: 6px;
+      background-color: var(--scrollbar-thumb);
+      border-radius: 3px;
     }
 
     &::-webkit-scrollbar-thumb:hover {
-      background-color: #404040;
-      background-clip: content-box;
+      background-color: var(--scrollbar-thumb-hover);
+    }
+
+    &::-webkit-scrollbar-corner {
+      background: transparent;
     }
   }
 
@@ -71,8 +158,52 @@
   }
 
   ::selection {
-    background-color: #ffcc01;
-    color: #0a0a0a;
+    background-color: var(--brand);
+    color: var(--ink-50);
+  }
+}
+
+/*
+ * Status pill recipes — flip between light-tinted (pastel chip on white) and
+ * dark-tinted (deep-bg + bright fg on near-black) per theme. Replaces the
+ * verbose `border-X-900/60 bg-X-950/40 text-X-300` clusters scattered across
+ * the codebase. Apply via className="status-pill status-success" etc.
+ */
+@layer utilities {
+  .status-pill {
+    @apply inline-flex items-center gap-1 rounded-xs border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em];
+  }
+
+  .status-success {
+    @apply border-emerald-200 bg-emerald-50 text-emerald-700;
+  }
+  .dark .status-success {
+    @apply border-emerald-500/40 bg-emerald-950/40 text-emerald-300;
+  }
+
+  .status-danger {
+    @apply border-red-200 bg-red-50 text-red-700;
+  }
+  .dark .status-danger {
+    @apply border-red-500/40 bg-red-950/40 text-red-300;
+  }
+
+  .status-warn {
+    @apply border-amber-200 bg-amber-50 text-amber-700;
+  }
+  .dark .status-warn {
+    @apply border-amber-500/40 bg-amber-950/40 text-amber-300;
+  }
+
+  .status-info {
+    @apply border-sky-200 bg-sky-50 text-sky-700;
+  }
+  .dark .status-info {
+    @apply border-sky-500/40 bg-sky-950/40 text-sky-300;
+  }
+
+  .status-neutral {
+    @apply border-ink-500 bg-ink-200 text-paper-muted;
   }
 }
 
@@ -94,76 +225,89 @@
   margin-bottom: 20px;
 }
 
-/* AgGrid Custom Styling - Ethereal & Clean Redesign */
+/*
+ * AgGrid Custom Styling — shared baseline + theme-scoped colour rules.
+ * Dimensions (font-size, row height, font family) apply to both themes;
+ * colour values are split between .dark (white-tinted glassy chrome) and
+ * the light fallback (warm-stone, opaque) so neither side reads as broken.
+ */
 .ag-theme-balham-dark,
 .ag-theme-balham {
   --ag-font-size: 12px;
   --ag-header-height: 32px;
   --ag-row-height: 28px;
   --ag-selected-row-background-color: transparent;
+}
+
+.ag-header-cell-label,
+.ag-cell {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.ag-header-cell-label {
+  font-weight: 500 !important;
+  font-size: 13px;
+  text-transform: lowercase;
+}
+.ag-row {
+  transition: background-color 0.3s ease;
+}
+
+/* Dark-mode colour rules — keep the glassy, white-tinted chrome on ink. */
+.dark .ag-theme-balham-dark,
+.dark .ag-theme-balham {
   --ag-row-hover-color: rgba(255, 255, 255, 0.02);
   --ag-header-background-color: transparent;
   --ag-border-color: rgba(255, 255, 255, 0.04);
 }
-
-/* Ethereal Headers */
-.ag-header {
+.dark .ag-header {
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   background-color: transparent !important;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
 }
-
-.ag-header-cell-label {
-  font-weight: 500 !important;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 13px;
+.dark .ag-header-cell-label {
   color: rgba(255, 255, 255, 0.85);
-  text-transform: lowercase;
   text-shadow: 0 0 10px rgba(255, 255, 255, 0.1);
 }
-
-/* Micro-Transitions */
-.ag-row {
-  transition: background-color 0.3s ease;
-}
-
-.ag-cell {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+.dark .ag-cell {
   border-right: 1px solid rgba(255, 255, 255, 0.02) !important;
 }
 
-/* Softened Syntax Highlighting - No Glows */
-.cell-string {
-  color: rgba(206, 145, 120, 0.9) !important;
-  /* Soft Terracotta */
+/* Light-mode colour rules — opaque warm-stone, no glass blur. */
+:root:not(.dark) .ag-theme-balham-dark,
+:root:not(.dark) .ag-theme-balham {
+  --ag-row-hover-color: rgba(0, 0, 0, 0.025);
+  --ag-header-background-color: var(--ink-200);
+  --ag-border-color: var(--ink-300);
+}
+:root:not(.dark) .ag-header {
+  background-color: var(--ink-200) !important;
+  border-bottom: 1px solid var(--ink-500) !important;
+}
+:root:not(.dark) .ag-header-cell-label {
+  color: var(--paper-muted);
+}
+:root:not(.dark) .ag-cell {
+  border-right: 1px solid var(--ink-300) !important;
 }
 
-.cell-number {
-  color: rgba(181, 206, 168, 0.9) !important;
-  /* Soft Sage */
-}
+/* Cell value tints — dark mode = soft terracotta/sage/sky on near-black,
+ * light mode = same hues shifted darker for AA contrast on warm white. */
+.dark .cell-string { color: rgba(206, 145, 120, 0.9) !important; }
+.dark .cell-number { color: rgba(181, 206, 168, 0.9) !important; }
+.dark .cell-boolean { color: rgba(86, 156, 214, 0.9) !important; }
+.dark .cell-date { color: rgba(156, 220, 254, 0.8) !important; }
+.dark .cell-null { color: rgba(255, 255, 255, 0.15) !important; }
+.dark .cell-object-preview { color: rgba(156, 220, 254, 0.4) !important; font-size: 11px; }
 
-.cell-boolean {
-  color: rgba(86, 156, 214, 0.9) !important;
-  /* Soft Blue */
-}
+:root:not(.dark) .cell-string { color: #a8512a !important; }
+:root:not(.dark) .cell-number { color: #3f6212 !important; }
+:root:not(.dark) .cell-boolean { color: #1d4ed8 !important; }
+:root:not(.dark) .cell-date { color: #0369a1 !important; }
+:root:not(.dark) .cell-null { color: var(--paper-faint) !important; }
+:root:not(.dark) .cell-object-preview { color: var(--paper-dim) !important; font-size: 11px; }
 
-.cell-date {
-  color: rgba(156, 220, 254, 0.8) !important;
-  /* Soft Sky Blue */
-}
-
-.cell-null {
-  color: rgba(255, 255, 255, 0.15) !important;
-}
-
-.cell-object-preview {
-  color: rgba(156, 220, 254, 0.4) !important;
-  font-size: 11px;
-}
-
-/* Colored Type Badges - High Visibility & Luminous */
+/* Type badges — same shape, theme-tinted bg/border. */
 .cell-type-badge {
   font-size: 8px;
   opacity: 0.6;
@@ -173,11 +317,15 @@
   transition: all 0.3s ease;
   padding: 1px 5px;
   border-radius: 4px;
-  background-color: rgba(255, 255, 255, 0.08);
-  /* Brighter background */
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  /* Luminous border */
   text-transform: lowercase;
+}
+.dark .cell-type-badge {
+  background-color: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+:root:not(.dark) .cell-type-badge {
+  background-color: var(--ink-200);
+  border: 1px solid var(--ink-500);
 }
 
 /* Vibrant Luminous colors */
@@ -277,14 +425,20 @@
 
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  /*
+   * shadcn semantic vars in light mode — harmonised with the warm stone
+   * editorial palette above (--background matches --ink-50). Primary maps
+   * to the amber-shifted brand so shadcn Button primary visually agrees
+   * with our editorial brand pills.
+   */
+  --background: oklch(0.972 0.005 95);
+  --foreground: oklch(0.18 0.01 60);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.18 0.01 60);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
+  --popover-foreground: oklch(0.18 0.01 60);
+  --primary: oklch(0.74 0.16 87);
+  --primary-foreground: oklch(0.18 0.01 60);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);

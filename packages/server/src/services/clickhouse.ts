@@ -888,17 +888,26 @@ export class ClickHouseService {
       let primaryKeyCacheFilesQuery = "0";
 
       if (hasMetricLog) {
-        cpuLoadQuery = `(SELECT avg(ProfileEvent_OSCPUVirtualTimeMicroseconds) / 1000000 
-                         FROM system.metric_log 
+        cpuLoadQuery = `(SELECT avg(ProfileEvent_OSCPUVirtualTimeMicroseconds) / 1000000
+                         FROM system.metric_log
                          WHERE event_time >= now() - INTERVAL ${intervalMinutes} MINUTE)`;
 
-        primaryKeyCacheBytesQuery = `(SELECT avg(CurrentMetric_PrimaryIndexCacheBytes) 
-                                     FROM system.metric_log 
-                                     WHERE event_time >= now() - INTERVAL ${intervalMinutes} MINUTE)`;
-
-        primaryKeyCacheFilesQuery = `(SELECT avg(CurrentMetric_PrimaryIndexCacheFiles) 
-                                     FROM system.metric_log 
-                                     WHERE event_time >= now() - INTERVAL ${intervalMinutes} MINUTE)`;
+        // CurrentMetric_PrimaryIndexCache* arrived in CH 24.x — gate on
+        // schema so older builds and stripped-down server images stay safe.
+        const [hasPriKeyBytes, hasPriKeyFiles] = await Promise.all([
+          this.checkColumnExists("system", "metric_log", "CurrentMetric_PrimaryIndexCacheBytes"),
+          this.checkColumnExists("system", "metric_log", "CurrentMetric_PrimaryIndexCacheFiles"),
+        ]);
+        if (hasPriKeyBytes) {
+          primaryKeyCacheBytesQuery = `(SELECT avg(CurrentMetric_PrimaryIndexCacheBytes)
+                                       FROM system.metric_log
+                                       WHERE event_time >= now() - INTERVAL ${intervalMinutes} MINUTE)`;
+        }
+        if (hasPriKeyFiles) {
+          primaryKeyCacheFilesQuery = `(SELECT avg(CurrentMetric_PrimaryIndexCacheFiles)
+                                       FROM system.metric_log
+                                       WHERE event_time >= now() - INTERVAL ${intervalMinutes} MINUTE)`;
+        }
       }
 
       if (hasAsyncMetricLog) {
@@ -996,6 +1005,26 @@ export class ClickHouseService {
       });
       const response = await result.json() as JsonResponse<{ result: number }>;
       return response.data[0]?.result === 1;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Helper to check whether a table has a specific column. Older or
+   * stripped-down ClickHouse builds drop CurrentMetric_* columns that newer
+   * versions ship; we use this to skip those references instead of crashing
+   * the whole metrics query.
+   * @private
+   */
+  private async checkColumnExists(database: string, table: string, column: string): Promise<boolean> {
+    try {
+      const result = await this.client.query({
+        query: `SELECT count() AS c FROM system.columns
+                WHERE database = '${database}' AND table = '${table}' AND name = '${column}'`,
+      });
+      const response = await result.json() as JsonResponse<{ c: number | string }>;
+      return Number(response.data[0]?.c ?? 0) > 0;
     } catch {
       return false;
     }
@@ -1550,13 +1579,18 @@ export class ClickHouseService {
       let asyncMap = new Map<number, any>();
 
       if (hasMetricLog) {
+        // arrayConcat with a sentinel Float64 0 keeps the array typed when the
+        // COLUMNS('CurrentMetric_.*CacheBytes') matcher returns no columns
+        // (older CH builds). Without it, arraySum([]) is Nothing-typed and
+        // ClickHouse rejects "array aggregation function cannot be performed
+        // on type Nothing".
         const metricResult = await this.client.query({
           query: `
             SELECT
               toUnixTimestamp(toStartOfInterval(event_time, INTERVAL ${bucketSeconds} SECOND)) as ts,
               avg(CurrentMetric_MemoryTracking) as memory_tracking,
               avg(CurrentMetric_MergesMutationsMemoryTracking) as merges_mutations_memory,
-              arraySum([COLUMNS('CurrentMetric_.*CacheBytes') EXCEPT 'CurrentMetric_FilesystemCache.*' APPLY avg]) as cache_bytes
+              arraySum(arrayConcat([toFloat64(0)], [COLUMNS('CurrentMetric_.*CacheBytes') EXCEPT 'CurrentMetric_FilesystemCache.*' APPLY avg])) as cache_bytes
             FROM system.metric_log
             WHERE event_time >= now() - INTERVAL ${intervalMinutes} MINUTE
             GROUP BY ts

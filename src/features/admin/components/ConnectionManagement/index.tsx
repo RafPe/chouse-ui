@@ -407,20 +407,22 @@ function ConnectionFormDialog({
                 className={cn(
                   "flex flex-col gap-1.5 rounded-xs border px-3 py-2.5",
                   testResult.success
-                    ? "border-emerald-500/40 bg-emerald-950/30"
-                    : "border-red-500/40 bg-red-950/30"
+                    ? "border-emerald-200 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-950/30"
+                    : "border-red-200 bg-red-50 dark:border-red-500/40 dark:bg-red-950/30"
                 )}
               >
                 <div className="flex items-center gap-2">
                   {testResult.success ? (
-                    <CheckCircle2 className="h-4 w-4 text-emerald-300" />
+                    <CheckCircle2 className="h-4 w-4 text-emerald-700 dark:text-emerald-300" />
                   ) : (
-                    <AlertCircle className="h-4 w-4 text-red-300" />
+                    <AlertCircle className="h-4 w-4 text-red-700 dark:text-red-300" />
                   )}
                   <span
                     className={cn(
                       "text-[13px] font-medium",
-                      testResult.success ? "text-emerald-200" : "text-red-200"
+                      testResult.success
+                        ? "text-emerald-800 dark:text-emerald-200"
+                        : "text-red-800 dark:text-red-200"
                     )}
                   >
                     {testResult.success ? "Connection successful" : "Connection failed"}
@@ -661,10 +663,10 @@ export default function ConnectionManagement() {
               </TableHeader>
               <TableBody>
                 {connections.map((conn) => (
-                  <TableRow key={conn.id} className="border-gray-800">
+                  <TableRow key={conn.id} className="border-ink-500">
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-white">{conn.name}</span>
+                        <span className="font-medium text-paper">{conn.name}</span>
                         {conn.isDefault && (
                           <span className="inline-flex items-center gap-1 rounded-xs border border-brand/40 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-brand">
                             <Star className="h-3 w-3 fill-brand" />
@@ -674,11 +676,11 @@ export default function ConnectionManagement() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-1 text-gray-300">
+                      <div className="flex items-center gap-1 text-paper-muted">
                         {conn.sslEnabled && (
                           <Tooltip>
                             <TooltipTrigger>
-                              <Lock className="w-3 h-3 text-green-400" />
+                              <Lock className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
                             </TooltipTrigger>
                             <TooltipContent>SSL Enabled</TooltipContent>
                           </Tooltip>
@@ -688,18 +690,18 @@ export default function ConnectionManagement() {
                         </span>
                       </div>
                     </TableCell>
-                    <TableCell className="text-gray-300">{conn.username}</TableCell>
-                    <TableCell className="text-gray-400">
-                      {conn.database || <span className="text-gray-600">default</span>}
+                    <TableCell className="text-paper-muted">{conn.username}</TableCell>
+                    <TableCell className="text-paper-muted">
+                      {conn.database || <span className="text-paper-faint">default</span>}
                     </TableCell>
                     <TableCell>
                       {conn.isActive ? (
-                        <span className="inline-flex items-center gap-1 rounded-xs border border-emerald-900/60 bg-emerald-950/40 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-emerald-300">
+                        <span className="status-pill status-success">
                           <CheckCircle2 className="h-3 w-3" />
                           Active
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 rounded-xs border border-ink-500 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">
+                        <span className="status-pill status-neutral">
                           <X className="h-3 w-3" />
                           Inactive
                         </span>
@@ -712,9 +714,9 @@ export default function ConnectionManagement() {
                             variant="ghost"
                             size="sm"
                             onClick={() => openUserAccessDialog(conn)}
-                            className="h-8 text-gray-300 hover:text-white"
+                            className="h-8 gap-1.5 text-paper-muted hover:bg-ink-200 hover:text-paper"
                           >
-                            <Users className="w-4 h-4 mr-1" />
+                            <Users className="w-4 h-4" />
                             Manage Access
                           </Button>
                         </TooltipTrigger>
@@ -730,7 +732,7 @@ export default function ConnectionManagement() {
                               size="icon"
                               onClick={() => handleTest(conn)}
                               disabled={testingConnectionId === conn.id}
-                              className="h-8 w-8"
+                              className="h-8 w-8 text-paper-muted hover:bg-ink-200 hover:text-paper"
                             >
                               {testingConnectionId === conn.id ? (
                                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -750,7 +752,7 @@ export default function ConnectionManagement() {
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => handleToggleActive(conn)}
-                                  className="h-8 w-8"
+                                  className="h-8 w-8 text-paper-muted hover:bg-ink-200 hover:text-paper"
                                 >
                                   {conn.isActive ? (
                                     <Unlock className="w-4 h-4" />
@@ -770,7 +772,7 @@ export default function ConnectionManagement() {
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => openEditDialog(conn)}
-                                  className="h-8 w-8"
+                                  className="h-8 w-8 text-paper-muted hover:bg-ink-200 hover:text-paper"
                                 >
                                   <Pencil className="w-4 h-4" />
                                 </Button>
@@ -787,7 +789,7 @@ export default function ConnectionManagement() {
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => setDeleteConnection(conn)}
-                                className="h-8 w-8 text-red-400 hover:text-red-300"
+                                className="h-8 w-8 text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-950/40 dark:hover:text-red-300"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </Button>

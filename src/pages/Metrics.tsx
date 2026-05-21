@@ -51,6 +51,8 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import UPlotMetricItemComponent from "@/features/metrics/components/UPlotMetricItemComponent";
+import { ServerMemoryBreakdown } from "@/components/monitoring/ServerMemoryBreakdown";
+import { TopResourceQueriesPanel } from "@/components/monitoring/TopResourceQueriesPanel";
 import { useMetrics, useProductionMetrics } from "@/hooks";
 import { cn, formatBytes as formatBytesUtil, formatCompactNumber, formatNumber } from "@/lib/utils";
 import { useRbacStore, RBAC_PERMISSIONS } from "@/stores";
@@ -128,6 +130,32 @@ interface MetricChartCardProps {
   isLoading: boolean;
   chartTitle: string;
   hideLatestValues?: boolean;
+}
+
+// Compact stat tile reused inside Memory / CPU / ZooKeeper card headers.
+// Matches the editorial "label + value (+ optional hint)" pattern from
+// ServerMemoryBreakdown so the three system sub-tabs look like siblings.
+function CpuStat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-faint">
+        {label}
+      </span>
+      <span className="font-mono text-[16px] leading-tight tabular-nums text-paper">
+        {value}
+      </span>
+      {hint && <span className="font-mono text-[10px] text-paper-faint">{hint}</span>}
+    </div>
+  );
+}
+
+// Pull the last value out of a MetricData "values" array. For multi-series
+// data the first series is returned. Returns undefined when data is missing.
+function lastValue(d?: { values: number[] | number[][] } | undefined): number | undefined {
+  if (!d || !d.values) return undefined;
+  const arr = Array.isArray(d.values[0]) ? (d.values as number[][])[0] : (d.values as number[]);
+  if (!arr || arr.length === 0) return undefined;
+  return arr[arr.length - 1];
 }
 
 const MetricChartCard: React.FC<MetricChartCardProps> = ({
@@ -261,7 +289,7 @@ const MetricChartCard: React.FC<MetricChartCardProps> = ({
           />
         ) : (
           <div className="flex items-center justify-center h-full">
-            <div className="flex flex-col items-center gap-3 text-gray-500">
+            <div className="flex flex-col items-center gap-3 text-paper-faint">
               <BarChart3 className="h-10 w-10 text-paper-dim" aria-hidden />
               <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">No data available</span>
             </div>
@@ -312,7 +340,6 @@ interface MetricsProps {
   embedded?: boolean;
   refreshKey?: number;
   autoRefresh?: boolean;
-  timeRange?: string;
   onRefreshChange?: (isRefreshing: boolean) => void;
 }
 
@@ -320,7 +347,6 @@ export default function Metrics({
   embedded = false,
   refreshKey,
   autoRefresh: externalAutoRefresh = false,
-  timeRange: externalTimeRange = "1h",
   onRefreshChange
 }: MetricsProps) {
   const { hasPermission } = useRbacStore();
@@ -331,8 +357,7 @@ export default function Metrics({
   const [activeTab, setActiveTab] = useState("overview");
   const [isRefreshCooldown, setIsRefreshCooldown] = useState(false);
 
-  // Use external timeRange if embedded, otherwise internal
-  const timeRange = embedded ? externalTimeRange : internalTimeRange;
+  const timeRange = internalTimeRange;
 
   // Use external autoRefresh if embedded (fixed 10s), otherwise internal
   const refreshInterval = embedded
@@ -872,8 +897,9 @@ export default function Metrics({
 
         {/* Tabs for different metric views - hidden if only Overview is available */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0 space-y-4">
-          {hasAdvancedMetrics && (
-            <TabsList className="h-9 self-start justify-start gap-0.5 rounded-xs border border-ink-500 bg-ink-100 p-0.5">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            {hasAdvancedMetrics ? (
+              <TabsList className="h-9 justify-start gap-0.5 rounded-xs border border-ink-500 bg-ink-100 p-0.5">
               <TabsTrigger
                 value="overview"
                 className={cn(
@@ -931,7 +957,19 @@ export default function Metrics({
                   Errors
                 </TabsTrigger>
                 <TabsTrigger
-                  value="system"
+                  value="memory"
+                  className={cn(
+                    "rounded-xs gap-2 px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.14em] transition-colors",
+                    "data-[state=active]:bg-ink-200 data-[state=active]:text-paper",
+                    "data-[state=inactive]:text-paper-dim hover:text-paper hover:bg-ink-200"
+                  )}
+                >
+                  <MemoryStick className="h-4 w-4" />
+                  Memory
+                </TabsTrigger>
+
+                <TabsTrigger
+                  value="cpu"
                   className={cn(
                     "rounded-xs gap-2 px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.14em] transition-colors",
                     "data-[state=active]:bg-ink-200 data-[state=active]:text-paper",
@@ -939,7 +977,19 @@ export default function Metrics({
                   )}
                 >
                   <Cpu className="h-4 w-4" />
-                  System
+                  CPU
+                </TabsTrigger>
+
+                <TabsTrigger
+                  value="zookeeper"
+                  className={cn(
+                    "rounded-xs gap-2 px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.14em] transition-colors",
+                    "data-[state=active]:bg-ink-200 data-[state=active]:text-paper",
+                    "data-[state=inactive]:text-paper-dim hover:text-paper hover:bg-ink-200"
+                  )}
+                >
+                  <Activity className="h-4 w-4" />
+                  ZooKeeper
                 </TabsTrigger>
 
                 <TabsTrigger
@@ -955,7 +1005,23 @@ export default function Metrics({
                 </TabsTrigger>
               </>
             </TabsList>
-          )}
+            ) : <span />}
+
+            {embedded && (
+              <Select value={internalTimeRange} onValueChange={setInternalTimeRange}>
+                <SelectTrigger className="h-8 w-[130px] rounded-xs border-ink-500 bg-ink-100 font-mono text-[11px] text-paper">
+                  <Clock className="mr-2 h-3.5 w-3.5 text-paper-dim" />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="15m">15 minutes</SelectItem>
+                  <SelectItem value="1h">1 hour</SelectItem>
+                  <SelectItem value="6h">6 hours</SelectItem>
+                  <SelectItem value="24h">24 hours</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
+          </div>
 
           {/* Overview Tab */}
           <TabsContent value="overview" className="flex-1 overflow-auto space-y-4 pr-1 min-h-0 data-[state=active]:flex flex-col">
@@ -1175,12 +1241,12 @@ export default function Metrics({
                 >
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3">
-                      <span className="grid h-9 w-9 place-items-center rounded-xs border border-red-900/60 bg-red-950/40 text-red-300">
+                      <span className="grid h-9 w-9 place-items-center rounded-xs border border-red-300 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
                         <AlertTriangle className="h-4 w-4" aria-hidden />
                       </span>
                       <h3 className="text-[14px] font-semibold tracking-tight text-paper">Recent errors</h3>
                     </div>
-                    <span className="inline-flex items-center gap-1 rounded-xs border border-red-900/60 bg-red-950/40 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-red-300">
+                    <span className="inline-flex items-center gap-1 rounded-xs border border-red-300 bg-red-50 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
                       {prodMetrics.errors.length} issues
                     </span>
                   </div>
@@ -1190,7 +1256,7 @@ export default function Metrics({
                         <span className="truncate font-mono text-[12px] text-red-200 max-w-[180px]" title={err.exception_name}>
                           {err.exception_name}
                         </span>
-                        <span className="rounded-xs border border-red-900/60 bg-red-950/40 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-red-300">
+                        <span className="rounded-xs border border-red-300 bg-red-50 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
                           {err.count}
                         </span>
                       </div>
@@ -1852,9 +1918,9 @@ export default function Metrics({
                               </td>
                               <td className="text-center">
                                 {rep.is_readonly ? (
-                                  <span className="inline-flex items-center rounded-xs border border-red-900/60 bg-red-950/40 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-red-300">READONLY</span>
+                                  <span className="inline-flex items-center rounded-xs border border-red-300 bg-red-50 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">READONLY</span>
                                 ) : (
-                                  <span className="inline-flex items-center rounded-xs border border-emerald-900/60 bg-emerald-950/40 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-emerald-300">HEALTHY</span>
+                                  <span className="inline-flex items-center rounded-xs border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300">HEALTHY</span>
                                 )}
                               </td>
                               <td className="text-right">
@@ -2029,7 +2095,7 @@ export default function Metrics({
                           <div className="flex items-start justify-between gap-4">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-1">
-                                <span className="inline-flex items-center rounded-xs border border-red-900/60 bg-red-950/40 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-red-300">
+                                <span className="inline-flex items-center rounded-xs border border-red-300 bg-red-50 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
                                   {err.exception_name}
                                 </span>
                                 <code className="rounded-xs border border-ink-500 bg-ink-300 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">Code: {err.exception_code}</code>
@@ -2056,7 +2122,7 @@ export default function Metrics({
                     animate={{ opacity: 1, y: 0 }}
                     className="rounded-md border border-ink-500 bg-ink-100 p-8 text-center md:col-span-3"
                   >
-                    <span className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-xs border border-emerald-900/60 bg-emerald-950/40 text-emerald-300">
+                    <span className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-xs border border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300">
                       <CheckCircle2 className="h-5 w-5" aria-hidden />
                     </span>
                     <p className="text-[13px] font-medium text-paper">No errors in the selected time range</p>
@@ -2067,201 +2133,239 @@ export default function Metrics({
             )
           }
 
-          {/* System Tab - Advanced only */}
+          {/* Memory Tab - Advanced only */}
           {
             hasAdvancedMetrics && (
-              <TabsContent value="system" className="flex-1 overflow-auto space-y-6 pr-1 min-h-0 data-[state=active]:flex flex-col">
-
-                {/* SECTION 1: SYSTEM RESOURCES */}
+              <TabsContent value="memory" className="flex-1 overflow-auto space-y-6 pr-1 min-h-0 data-[state=active]:flex flex-col">
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.1 }}
-                  className="rounded-md border border-ink-500 bg-ink-100 p-6"
+                  className="flex flex-col rounded-md border border-ink-500 bg-ink-100"
                 >
-                  <div className="flex items-center gap-3 mb-6">
-                    <span className="grid h-9 w-9 place-items-center rounded-xs border border-ink-500 bg-ink-200 text-paper-muted">
-                      <Server className="h-4 w-4" aria-hidden />
-                    </span>
-                    <div className="flex flex-col gap-0.5">
-                      <h3 className="text-[14px] font-semibold tracking-tight text-paper">System Resources</h3>
-                      <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">CPU usage, load, and thread pools</p>
-                    </div>
-                  </div>
+                  <ServerMemoryBreakdown variant="inline" />
 
-                  <div className="grid gap-6 lg:grid-cols-2 mb-6">
-                    {/* CPU Breakdown Chart - Prominent */}
-                    <MetricChartCard
-                      title="CPU Breakdown"
-                      subtitle="User, System, Wait, I/O Wait"
-                      icon={Cpu}
-                      color="emerald"
-                      data={cpuBreakdownData}
-                      isLoading={prodLoading}
-                      chartTitle="%"
-                      hideLatestValues
-                    />
-                    {/* Concurrency Chart - Prominent */}
-                    <MetricChartCard
-                      title="Concurrency"
-                      subtitle="Active and queued requests"
-                      icon={Gauge}
-                      color="purple"
-                      data={concurrencyData}
-                      isLoading={prodLoading}
-                      chartTitle="Reqs"
-                      hideLatestValues
-                    />
-                  </div>
+                  {allocatorMemoryData && allocatorMemoryData.values.some(v => v.some(n => n > 0)) && (
+                    <div className="border-t border-ink-500 p-4">
+                      <div className="mb-3 flex items-center gap-2.5">
+                        <span className="grid h-7 w-7 place-items-center rounded-xs border border-ink-500 bg-ink-200 text-paper-muted">
+                          <Database className="h-3.5 w-3.5" aria-hidden />
+                        </span>
+                        <div className="flex flex-col leading-tight">
+                          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-faint">
+                            Allocator · jemalloc over time
+                          </span>
+                          <span className="text-[13px] font-medium text-paper">Allocated vs resident</span>
+                        </div>
+                      </div>
 
-                  <div className="grid grid-cols-2 md:grid-cols-4 border-l border-t border-ink-500">
-                    <StatCard
-                      title="Load Average (15m)"
-                      value={prodMetrics?.resources?.load_average_15?.toFixed(2) || "0.00"}
-                      icon={Activity}
-                      isLoading={prodLoading}
-                    />
-                    <StatCard
-                      title="Global Threads"
-                      value={String(prodMetrics?.resources?.global_threads || 0)}
-                      icon={Network}
-                      isLoading={prodLoading}
-                    />
-                    <StatCard
-                      title="Schedule Pool"
-                      value={String(prodMetrics?.resources?.background_schedule_pool_tasks || 0)}
-                      icon={Clock}
-                      isLoading={prodLoading}
-                    />
-                    <StatCard
-                      title="File Descriptors"
-                      value={String(prodMetrics?.resources?.file_descriptors_used || 0)}
-                      icon={FileText}
-                      isLoading={prodLoading}
-                    />
-                  </div>
-                </motion.div>
-
-
-                {/* SECTION 3: MEMORY ANALYSIS */}
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.3 }}
-                  className="rounded-md border border-ink-500 bg-ink-100 p-6"
-                >
-                  <div className="flex items-center gap-3 mb-6">
-                    <span className="grid h-9 w-9 place-items-center rounded-xs border border-ink-500 bg-ink-200 text-paper-muted">
-                      <MemoryStick className="h-4 w-4" aria-hidden />
-                    </span>
-                    <div className="flex flex-col gap-0.5">
-                      <h3 className="text-[14px] font-semibold tracking-tight text-paper">Memory Analysis</h3>
-                      <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">Detailed memory usage, caches, and allocators</p>
-                    </div>
-                  </div>
-
-                  <div className="grid gap-6 lg:grid-cols-2 mb-6">
-                    {/* Detailed Memory Breakdown */}
-                    <MetricChartCard
-                      title="Detailed Memory Breakdown"
-                      subtitle="Memory usage by component (resident and virtual)"
-                      icon={MemoryStick}
-                      color="purple"
-                      data={memoryBreakdownData}
-                      isLoading={prodLoading}
-                      chartTitle="Bytes"
-                      hideLatestValues
-                    />
-
-                    {/* Allocator Memory */}
-                    <MetricChartCard
-                      title="Allocator Memory (jemalloc)"
-                      subtitle="Memory usage by jemalloc allocator"
-                      icon={Database}
-                      color="emerald"
-                      data={allocatorMemoryData}
-                      isLoading={prodLoading}
-                      chartTitle="Bytes"
-                      hideLatestValues
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 md:grid-cols-3 border-l border-t border-ink-500">
-                    <StatCard
-                      title="Memory Cache"
-                      value={formatBytes(memoryBreakdownData?.values[2]?.slice(-1)[0] || 0)}
-                      icon={Zap}
-                      isLoading={prodLoading}
-                    />
-                    <StatCard
-                      title="Jemalloc Allocated"
-                      value={formatBytes(allocatorMemoryData?.values[0]?.slice(-1)[0] || 0)}
-                      icon={Database}
-                      isLoading={prodLoading}
-                    />
-                    <StatCard
-                      title="Jemalloc Resident"
-                      value={formatBytes(allocatorMemoryData?.values[1]?.slice(-1)[0] || 0)}
-                      icon={HardDrive}
-                      isLoading={prodLoading}
-                    />
-                  </div>
-                </motion.div>
-
-                {/* SECTION 4: LOAD AVERAGE & ZOOKEEPER */}
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.4 }}
-                  className="rounded-md border border-ink-500 bg-ink-100 p-6"
-                >
-                  <div className="flex items-center gap-3 mb-6">
-                    <span className="grid h-9 w-9 place-items-center rounded-xs border border-ink-500 bg-ink-200 text-paper-muted">
-                      <Activity className="h-4 w-4" aria-hidden />
-                    </span>
-                    <div className="flex flex-col gap-0.5">
-                      <h3 className="text-[14px] font-semibold tracking-tight text-paper">System Load & ZooKeeper</h3>
-                      <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">Load average history and ZooKeeper/Keeper metrics</p>
-                    </div>
-                  </div>
-
-                  <div className="grid gap-6 lg:grid-cols-2">
-                    <MetricChartCard
-                      title="Load Average (15min)"
-                      subtitle="System load average over time"
-                      icon={Activity}
-                      color="emerald"
-                      data={loadAverageData}
-                      isLoading={prodLoading}
-                      chartTitle="Load"
-                    />
-                    <MetricChartCard
-                      title="ZooKeeper Transactions"
-                      subtitle="Keeper transactions per second (if using replicated tables)"
-                      icon={Network}
-                      color="blue"
-                      data={zookeeperTransactionsData}
-                      isLoading={prodLoading}
-                      chartTitle="Txn/s"
-                    />
-                  </div>
-
-                  {zookeeperBytesData && (
-                    <div className="mt-6">
                       <MetricChartCard
-                        title="ZooKeeper Traffic"
-                        subtitle="Bytes sent and received from ZooKeeper/Keeper"
-                        icon={Network}
-                        color="cyan"
-                        data={zookeeperBytesData}
+                        title="Allocator Memory (jemalloc)"
+                        subtitle="Memory usage by jemalloc allocator"
+                        icon={Database}
+                        color="emerald"
+                        data={allocatorMemoryData}
                         isLoading={prodLoading}
                         chartTitle="Bytes"
                         hideLatestValues
                       />
                     </div>
                   )}
-                </motion.div>
 
+                  {/* Top memory queries — heaviest by memory_usage in window */}
+                  <div className="border-t border-ink-500">
+                    <TopResourceQueriesPanel metric="memory" hoursBack={1} limit={10} />
+                  </div>
+                </motion.div>
+              </TabsContent>
+            )
+          }
+
+          {/* CPU Tab - Advanced only */}
+          {
+            hasAdvancedMetrics && (
+              <TabsContent value="cpu" className="flex-1 overflow-auto space-y-6 pr-1 min-h-0 data-[state=active]:flex flex-col">
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 }}
+                  className="flex flex-col rounded-md border border-ink-500 bg-ink-100"
+                >
+                  {/* Top: header + stats row mirroring the Memory card */}
+                  <div className="flex flex-col gap-4 px-4 py-4">
+                    <div className="flex items-center gap-2.5">
+                      <span className="grid h-7 w-7 place-items-center rounded-xs border border-ink-500 bg-ink-200 text-paper-muted">
+                        <Cpu className="h-3.5 w-3.5" aria-hidden />
+                      </span>
+                      <div className="flex flex-col leading-tight">
+                        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-faint">
+                          CPU · what it's doing
+                        </span>
+                        <span className="text-[13px] font-medium text-paper">CPU breakdown</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 border-y border-ink-500 py-3 md:grid-cols-4">
+                      <CpuStat
+                        label="Load avg (15m)"
+                        value={prodMetrics?.resources?.load_average_15?.toFixed(2) || "0.00"}
+                      />
+                      <CpuStat
+                        label="Global threads"
+                        value={String(prodMetrics?.resources?.global_threads || 0)}
+                      />
+                      <CpuStat
+                        label="Schedule pool"
+                        value={String(prodMetrics?.resources?.background_schedule_pool_tasks || 0)}
+                      />
+                      <CpuStat
+                        label="File descriptors"
+                        value={String(prodMetrics?.resources?.file_descriptors_used || 0)}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Time-series stack inside the same card */}
+                  <div className="border-t border-ink-500 p-4">
+                    <div className="mb-3 flex items-center gap-2.5">
+                      <span className="grid h-7 w-7 place-items-center rounded-xs border border-ink-500 bg-ink-200 text-paper-muted">
+                        <Activity className="h-3.5 w-3.5" aria-hidden />
+                      </span>
+                      <div className="flex flex-col leading-tight">
+                        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-faint">
+                          CPU · over time
+                        </span>
+                        <span className="text-[13px] font-medium text-paper">Mode split & concurrency</span>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-6 lg:grid-cols-2">
+                      <MetricChartCard
+                        title="CPU Breakdown"
+                        subtitle="User, System, Wait, I/O Wait"
+                        icon={Cpu}
+                        color="emerald"
+                        data={cpuBreakdownData}
+                        isLoading={prodLoading}
+                        chartTitle="%"
+                        hideLatestValues
+                      />
+                      <MetricChartCard
+                        title="Concurrency"
+                        subtitle="Active and queued requests"
+                        icon={Gauge}
+                        color="purple"
+                        data={concurrencyData}
+                        isLoading={prodLoading}
+                        chartTitle="Reqs"
+                        hideLatestValues
+                      />
+                    </div>
+                  </div>
+
+                  {/* Top CPU queries */}
+                  <div className="border-t border-ink-500">
+                    <TopResourceQueriesPanel metric="cpu" hoursBack={1} limit={10} />
+                  </div>
+                </motion.div>
+              </TabsContent>
+            )
+          }
+
+          {/* ZooKeeper Tab - Advanced only */}
+          {
+            hasAdvancedMetrics && (
+              <TabsContent value="zookeeper" className="flex-1 overflow-auto space-y-6 pr-1 min-h-0 data-[state=active]:flex flex-col">
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 }}
+                  className="flex flex-col rounded-md border border-ink-500 bg-ink-100"
+                >
+                  {/* Top: header + load + zk activity strip */}
+                  <div className="flex flex-col gap-4 px-4 py-4">
+                    <div className="flex items-center gap-2.5">
+                      <span className="grid h-7 w-7 place-items-center rounded-xs border border-ink-500 bg-ink-200 text-paper-muted">
+                        <Activity className="h-3.5 w-3.5" aria-hidden />
+                      </span>
+                      <div className="flex flex-col leading-tight">
+                        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-faint">
+                          ZooKeeper · cluster coordination
+                        </span>
+                        <span className="text-[13px] font-medium text-paper">Keeper & system load</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 border-y border-ink-500 py-3 md:grid-cols-3">
+                      <CpuStat
+                        label="System load (15m)"
+                        value={prodMetrics?.resources?.load_average_15?.toFixed(2) || "0.00"}
+                        hint="UNIX load average"
+                      />
+                      <CpuStat
+                        label="Transactions"
+                        value={lastValue(zookeeperTransactionsData)?.toFixed(2) || "0.00"}
+                        hint="txn / sec"
+                      />
+                      <CpuStat
+                        label="Traffic"
+                        value={(formatBytesUtil(lastValue(zookeeperBytesData) || 0) || "0 B") + "/s"}
+                        hint="bytes per second"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Charts row inside the same card */}
+                  <div className="border-t border-ink-500 p-4">
+                    <div className="mb-3 flex items-center gap-2.5">
+                      <span className="grid h-7 w-7 place-items-center rounded-xs border border-ink-500 bg-ink-200 text-paper-muted">
+                        <Network className="h-3.5 w-3.5" aria-hidden />
+                      </span>
+                      <div className="flex flex-col leading-tight">
+                        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-faint">
+                          ZooKeeper · over time
+                        </span>
+                        <span className="text-[13px] font-medium text-paper">Load, transactions, traffic</span>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-6 lg:grid-cols-2">
+                      <MetricChartCard
+                        title="Load Average (15min)"
+                        subtitle="System load average over time"
+                        icon={Activity}
+                        color="emerald"
+                        data={loadAverageData}
+                        isLoading={prodLoading}
+                        chartTitle="Load"
+                      />
+                      <MetricChartCard
+                        title="ZooKeeper Transactions"
+                        subtitle="Keeper transactions per second (if using replicated tables)"
+                        icon={Network}
+                        color="blue"
+                        data={zookeeperTransactionsData}
+                        isLoading={prodLoading}
+                        chartTitle="Txn/s"
+                      />
+                    </div>
+
+                    {zookeeperBytesData && (
+                      <div className="mt-6">
+                        <MetricChartCard
+                          title="ZooKeeper Traffic"
+                          subtitle="Bytes sent and received from ZooKeeper/Keeper"
+                          icon={Network}
+                          color="cyan"
+                          data={zookeeperBytesData}
+                          isLoading={prodLoading}
+                          chartTitle="Bytes"
+                          hideLatestValues
+                        />
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
               </TabsContent>
             )
           }
@@ -2369,7 +2473,7 @@ export default function Metrics({
                 className={cn(
                   "h-9 gap-2 rounded-xs px-3 font-mono text-[11px] uppercase tracking-[0.14em]",
                   refreshInterval > 0
-                    ? "border-emerald-900/60 bg-emerald-950/40 text-emerald-300 hover:border-emerald-800 hover:bg-emerald-950/60"
+                    ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300 hover:border-emerald-800 hover:bg-emerald-950/60"
                     : "border-ink-500 bg-ink-100 text-paper hover:border-ink-700 hover:bg-ink-200"
                 )}
                 onClick={() => setInternalRefreshInterval(refreshInterval > 0 ? 0 : 30)}

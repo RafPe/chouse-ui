@@ -87,7 +87,7 @@ function TabCard({ tabKey, isActive, onClick, disabled }: TabCardProps) {
       disabled={disabled}
       aria-pressed={isActive}
       className={cn(
-        "group relative flex min-w-[200px] items-start gap-3 border border-ink-500 px-4 py-3 text-left transition-colors",
+        "group @container relative flex flex-1 min-w-[160px] items-center gap-3 border border-ink-500 px-4 py-3 text-left transition-colors",
         "rounded-xs",
         isActive
           ? "border-ink-700 bg-ink-200 text-paper"
@@ -115,7 +115,12 @@ function TabCard({ tabKey, isActive, onClick, disabled }: TabCardProps) {
         >
           {config.label}
         </span>
-        <span className="truncate font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">
+        {/* Description appears only when the card itself is wide enough
+            to render it without truncation — driven by container queries
+            on the button so each card decides for itself, regardless of
+            viewport. 240px is roughly the point where mono-uppercase
+            10px at tracking-0.14em stops needing ellipsis. */}
+        <span className="hidden truncate font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint @[240px]:block">
           {config.description}
         </span>
       </div>
@@ -216,7 +221,7 @@ export default function Admin() {
         <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-6 py-6">
           {activeTab === "users" && canViewUsers && (
             <TabsContent value="users" className="mt-0 h-full outline-none">
-              <div className="h-full overflow-hidden rounded-md border border-ink-500 bg-ink-100">
+              <div className="rounded-md border border-ink-500 bg-ink-100">
                 <UserTable />
               </div>
             </TabsContent>
@@ -224,7 +229,7 @@ export default function Admin() {
 
           {activeTab === "roles" && canViewRoles && (
             <TabsContent value="roles" className="mt-0 h-full outline-none">
-              <div className="h-full overflow-hidden rounded-md border border-ink-500 bg-ink-100">
+              <div className="rounded-md border border-ink-500 bg-ink-100">
                 <RbacRolesTable onCreateRole={() => {}} onEditRole={() => {}} />
               </div>
             </TabsContent>
@@ -232,7 +237,7 @@ export default function Admin() {
 
           {activeTab === "connections" && canViewConnections && (
             <TabsContent value="connections" className="mt-0 h-full outline-none">
-              <div className="h-full overflow-hidden rounded-md border border-ink-500 bg-ink-100">
+              <div className="rounded-md border border-ink-500 bg-ink-100">
                 <ConnectionManagement />
               </div>
             </TabsContent>
@@ -240,7 +245,7 @@ export default function Admin() {
 
           {activeTab === "clickhouse-users" && canViewClickHouseUsers && (
             <TabsContent value="clickhouse-users" className="mt-0 h-full outline-none">
-              <div className="h-full overflow-hidden rounded-md border border-ink-500 bg-ink-100">
+              <div className="rounded-md border border-ink-500 bg-ink-100">
                 <ClickHouseUsersManagement />
               </div>
             </TabsContent>
@@ -248,7 +253,7 @@ export default function Admin() {
 
           {activeTab === "ai-models" && canViewAiModels && (
             <TabsContent value="ai-models" className="mt-0 h-full outline-none">
-              <div className="h-full overflow-hidden rounded-md border border-ink-500 bg-ink-100">
+              <div className="rounded-md border border-ink-500 bg-ink-100">
                 <AiModelsManagement />
               </div>
             </TabsContent>
@@ -256,7 +261,7 @@ export default function Admin() {
 
           {activeTab === "audit" && canViewAudit && (
             <TabsContent value="audit" className="mt-0 h-full outline-none">
-              <div className="h-full overflow-hidden rounded-md border border-ink-500 bg-ink-100">
+              <div className="rounded-md border border-ink-500 bg-ink-100">
                 <RbacAuditLogs />
               </div>
             </TabsContent>

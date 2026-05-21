@@ -53,6 +53,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import ConfirmationDialog from '@/components/common/ConfirmationDialog';
 import { toast } from 'sonner';
 import { useLiveQueries, useKillQuery, useLiveQueriesStats } from '@/hooks/useLiveQueries';
+import { useBlockedTaskSummary } from '@/hooks/useMonitoringTimeline';
 import { useRbacStore, RBAC_PERMISSIONS } from '@/stores';
 import { cn } from '@/lib/utils';
 import type { LiveQuery } from '@/api/live-queries';
@@ -117,6 +118,20 @@ function formatDuration(seconds: unknown): string {
     return `${mins}m ${secs}s`;
 }
 
+// Convert microseconds of CPU time into something operators can scan quickly.
+// 1.2s of CPU across 4 threads is more meaningful than "1,247,521" microseconds.
+function formatCpuTime(microseconds: unknown): string {
+    const n = toFiniteNumber(microseconds);
+    if (n === null || n === 0) return '—';
+    const ms = n / 1000;
+    if (ms < 1) return `${n}µs`;
+    if (ms < 1000) return `${Math.round(ms)}ms`;
+    const s = ms / 1000;
+    if (s < 60) return `${s.toFixed(1)}s`;
+    const m = Math.floor(s / 60);
+    return `${m}m ${(s % 60).toFixed(0)}s`;
+}
+
 function truncateQuery(query: string, maxLength: number = 100): string {
     if (query.length <= maxLength) return query;
     return query.substring(0, maxLength) + '...';
@@ -150,7 +165,106 @@ function StatsCard({ icon: Icon, label, value }: StatsCardProps) {
 }
 
 // ============================================
-// Query Row Component  
+// Server memory pressure strip — single-row "used / total · %" with a bar.
+// Tile lights up amber/red as pressure climbs so it's spottable mid-scan.
+// ============================================
+
+function ServerMemoryStrip({
+    used,
+    total,
+    pct,
+}: {
+    used: number;
+    total: number;
+    pct: number;
+}) {
+    const tone = pct >= 90 ? "danger" : pct >= 75 ? "warn" : "normal";
+    const trackTone =
+        tone === "danger"
+            ? "bg-red-500/20"
+            : tone === "warn"
+                ? "bg-amber-500/15"
+                : "bg-ink-300";
+    const fillTone =
+        tone === "danger"
+            ? "bg-red-500"
+            : tone === "warn"
+                ? "bg-amber-500"
+                : "bg-brand";
+    const pctTone =
+        tone === "danger"
+            ? "text-red-700 dark:text-red-300"
+            : tone === "warn"
+                ? "text-amber-700 dark:text-amber-300"
+                : "text-paper";
+
+    return (
+        <div className="flex items-center gap-4 rounded-xs border border-ink-500 bg-ink-100 px-4 py-3">
+            <span className="grid h-7 w-7 shrink-0 place-items-center rounded-xs border border-ink-500 bg-ink-200 text-paper-muted">
+                <MemoryStick className="h-3.5 w-3.5" aria-hidden />
+            </span>
+            <div className="flex flex-col leading-tight">
+                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-paper-faint">
+                    Server memory · resident / total
+                </span>
+                <span className="font-mono text-[13px] text-paper">
+                    {formatBytes(used)} <span className="text-paper-faint">/</span> {formatBytes(total)}
+                </span>
+            </div>
+            <div className="ml-auto flex flex-1 items-center gap-3">
+                <div className={cn("h-1.5 flex-1 overflow-hidden rounded-full", trackTone)}>
+                    <div
+                        className={cn("h-full rounded-full transition-all", fillTone)}
+                        style={{ width: `${pct}%` }}
+                    />
+                </div>
+                <span className={cn("w-12 text-right font-mono text-[13px] tabular-nums", pctTone)}>
+                    {pct}%
+                </span>
+            </div>
+        </div>
+    );
+}
+
+// ============================================
+// Sortable column header — click to set the current sort key. Active key
+// gets a chevron and brand-tinted label. No multi-direction toggle: every
+// sort is "biggest at top" because that's what an operator chasing a hot
+// query actually wants.
+// ============================================
+
+type SortKey = 'duration' | 'cpu' | 'memory' | 'rows';
+
+function SortableTableHead({
+    label,
+    sortKey,
+    current,
+    onSort,
+}: {
+    label: string;
+    sortKey: SortKey;
+    current: SortKey;
+    onSort: (k: SortKey) => void;
+}) {
+    const isActive = current === sortKey;
+    return (
+        <TableHead
+            onClick={() => onSort(sortKey)}
+            className={cn(
+                "cursor-pointer select-none font-mono text-[10px] uppercase tracking-[0.14em] transition-colors",
+                isActive ? "text-brand" : "text-paper-faint hover:text-paper-muted"
+            )}
+        >
+            <span className="inline-flex items-center gap-1">
+                {label}
+                {isActive && <ChevronDown className="h-3 w-3" aria-hidden />}
+            </span>
+        </TableHead>
+    );
+}
+
+// ============================================
+// Query Row Component
 // ============================================
 
 interface QueryRowProps {
@@ -197,25 +311,25 @@ function QueryRow({ query, onKill, canKill, isKilling }: QueryRowProps) {
                                             e.stopPropagation();
                                             copyQueryId();
                                         }}
-                                        className="p-1 hover:bg-white/10 rounded transition-colors"
+                                        className="p-1 hover:bg-ink-300 rounded transition-colors"
                                     >
                                         {copied ? (
-                                            <Check className="w-3 h-3 text-green-400" />
+                                            <Check className="w-3 h-3 text-emerald-500" />
                                         ) : (
-                                            <Copy className="w-3 h-3 text-gray-500" />
+                                            <Copy className="w-3 h-3 text-paper-faint" />
                                         )}
                                     </button>
                                 </TooltipTrigger>
                                 <TooltipContent>Copy Query ID</TooltipContent>
                             </Tooltip>
                         </TooltipProvider>
-                        <span className="text-gray-300">{query.query_id.slice(0, 8)}...</span>
+                        <span className="text-paper-muted">{query.query_id.slice(0, 8)}...</span>
                     </div>
                 </TableCell>
                 <TableCell>
                     <div className="flex items-center gap-2">
-                        <User className="w-3.5 h-3.5 text-gray-500" />
-                        <span className="text-gray-300">
+                        <User className="w-3.5 h-3.5 text-paper-faint" />
+                        <span className="text-paper-muted">
                             {query.rbac_user_display_name || query.rbac_user || query.user}
                         </span>
                     </div>
@@ -223,11 +337,11 @@ function QueryRow({ query, onKill, canKill, isKilling }: QueryRowProps) {
                 <TableCell className="max-w-[300px]">
                     <div className="flex items-center gap-2">
                         {isExpanded ? (
-                            <ChevronUp className="w-4 h-4 text-gray-500 flex-shrink-0" />
+                            <ChevronUp className="w-4 h-4 text-paper-faint flex-shrink-0" />
                         ) : (
-                            <ChevronDown className="w-4 h-4 text-gray-500 flex-shrink-0" />
+                            <ChevronDown className="w-4 h-4 text-paper-faint flex-shrink-0" />
                         )}
-                        <code className="text-xs text-gray-300 truncate">
+                        <code className="text-xs text-paper-muted truncate">
                             {truncateQuery(query.query)}
                         </code>
                     </div>
@@ -245,14 +359,22 @@ function QueryRow({ query, onKill, canKill, isKilling }: QueryRowProps) {
                     </Badge>
                 </TableCell>
                 <TableCell>
-                    <span className="text-gray-300 text-sm">
+                    <span className="text-paper-muted text-sm">
                         {formatBytes(query.memory_usage)}
                     </span>
                 </TableCell>
                 <TableCell>
-                    <span className="text-gray-300 text-sm">
+                    <span className="text-paper-muted text-sm">
                         {formatNumber(query.read_rows)}
                     </span>
+                </TableCell>
+                <TableCell>
+                    <div className="flex flex-col font-mono text-[12px] leading-tight">
+                        <span className="text-paper">{formatCpuTime(query.cpu_time_microseconds)}</span>
+                        {query.thread_count > 0 && (
+                            <span className="text-[10px] text-paper-faint">{query.thread_count} thr</span>
+                        )}
+                    </div>
                 </TableCell>
                 <TableCell>
                     <TooltipProvider>
@@ -269,8 +391,8 @@ function QueryRow({ query, onKill, canKill, isKilling }: QueryRowProps) {
                                     className={cn(
                                         "h-8 px-3",
                                         canKill
-                                            ? "text-red-400 hover:text-red-300 hover:bg-red-500/20"
-                                            : "text-gray-600 cursor-not-allowed"
+                                            ? "text-red-500 hover:text-red-600 hover:bg-red-500/15 dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-500/20"
+                                            : "text-paper-faint cursor-not-allowed"
                                     )}
                                 >
                                     {isKilling ? (
@@ -292,7 +414,7 @@ function QueryRow({ query, onKill, canKill, isKilling }: QueryRowProps) {
             <AnimatePresence>
                 {isExpanded && (
                     <TableRow>
-                        <TableCell colSpan={7} className="p-0">
+                        <TableCell colSpan={8} className="p-0">
                             <motion.div
                                 initial={{ height: 0, opacity: 0 }}
                                 animate={{ height: 'auto', opacity: 1 }}
@@ -300,18 +422,18 @@ function QueryRow({ query, onKill, canKill, isKilling }: QueryRowProps) {
                                 transition={{ duration: 0.2 }}
                                 className="overflow-hidden"
                             >
-                                <div className="p-4 bg-gray-800/50 border-t border-gray-700/50">
+                                <div className="p-4 bg-ink-200 border-t border-ink-500">
                                     <div className="flex items-center gap-2 mb-2">
                                         <Terminal className="w-4 h-4 text-paper-muted" />
-                                        <span className="text-sm font-medium text-gray-300">Full Query</span>
+                                        <span className="text-sm font-medium text-paper-muted">Full Query</span>
                                     </div>
-                                    <pre className="text-xs text-gray-300 bg-gray-900/50 p-3 rounded-lg overflow-x-auto whitespace-pre-wrap">
+                                    <pre className="text-xs text-paper bg-ink-100 border border-ink-500 p-3 rounded-xs overflow-x-auto whitespace-pre-wrap">
                                         {query.query}
                                     </pre>
-                                    <div className="mt-3 flex gap-4 text-xs text-gray-500">
-                                        <span>Query ID: <code className="text-gray-400">{query.query_id}</code></span>
-                                        <span>Client: <code className="text-gray-400">{query.client_name || 'Unknown'}</code></span>
-                                        <span>Read Bytes: <code className="text-gray-400">{formatBytes(query.read_bytes)}</code></span>
+                                    <div className="mt-3 flex gap-4 text-xs text-paper-faint">
+                                        <span>Query ID: <code className="text-paper-muted">{query.query_id}</code></span>
+                                        <span>Client: <code className="text-paper-muted">{query.client_name || 'Unknown'}</code></span>
+                                        <span>Read Bytes: <code className="text-paper-muted">{formatBytes(query.read_bytes)}</code></span>
                                     </div>
                                 </div>
                             </motion.div>
@@ -350,6 +472,7 @@ export default function LiveQueriesTable({
     const [searchQuery, setSearchQuery] = useState('');
     const [internalRefreshInterval, setInternalRefreshInterval] = useState(3000);
     const [queryToKill, setQueryToKill] = useState<string | null>(null);
+    const [sortBy, setSortBy] = useState<'duration' | 'cpu' | 'memory' | 'rows'>('duration');
 
     // If embedded, use external autoRefresh (fixed to 3s when on) or 0 (off)
     // If not embedded, use internal selector
@@ -364,6 +487,12 @@ export default function LiveQueriesTable({
     const { data, isLoading, error, refetch, isFetching } = useLiveQueries(refreshInterval);
     const killQuery = useKillQuery();
     const stats = useLiveQueriesStats(data);
+    const { data: blockedSummary } = useBlockedTaskSummary();
+    const serverMemoryUsed = blockedSummary?.server_memory_used_bytes ?? 0;
+    const serverMemoryTotal = blockedSummary?.server_memory_total_bytes ?? 0;
+    const serverMemoryPct = serverMemoryTotal > 0
+        ? Math.min(100, Math.round((serverMemoryUsed / serverMemoryTotal) * 100))
+        : 0;
 
     // Manual refresh effect
     useEffect(() => {
@@ -380,15 +509,27 @@ export default function LiveQueriesTable({
     // Filter queries based on search
     const filteredQueries = useMemo(() => {
         if (!data?.queries) return [];
-        if (!searchQuery) return data.queries;
+        const filtered = !searchQuery
+            ? data.queries
+            : (() => {
+                const query = searchQuery.toLowerCase();
+                return data.queries.filter(q =>
+                    q.query_id.toLowerCase().includes(query) ||
+                    q.user.toLowerCase().includes(query) ||
+                    q.query.toLowerCase().includes(query)
+                );
+            })();
 
-        const query = searchQuery.toLowerCase();
-        return data.queries.filter(q =>
-            q.query_id.toLowerCase().includes(query) ||
-            q.user.toLowerCase().includes(query) ||
-            q.query.toLowerCase().includes(query)
-        );
-    }, [data?.queries, searchQuery]);
+        const sorted = [...filtered].sort((a, b) => {
+            switch (sortBy) {
+                case 'cpu':    return (b.cpu_time_microseconds || 0) - (a.cpu_time_microseconds || 0);
+                case 'memory': return (b.memory_usage || 0) - (a.memory_usage || 0);
+                case 'rows':   return (b.read_rows || 0) - (a.read_rows || 0);
+                default:       return (b.elapsed_seconds || 0) - (a.elapsed_seconds || 0);
+            }
+        });
+        return sorted;
+    }, [data?.queries, searchQuery, sortBy]);
 
     const handleKillQuery = useCallback((queryId: string) => {
         setQueryToKill(queryId);
@@ -415,7 +556,7 @@ export default function LiveQueriesTable({
     if (error) {
         return (
             <div className="flex flex-col items-center justify-center p-12 text-center">
-                <div className="mb-4 grid h-12 w-12 place-items-center rounded-xs border border-red-900/60 bg-red-950/40 text-red-300">
+                <div className="mb-4 grid h-12 w-12 place-items-center rounded-xs border border-red-300 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
                     <AlertCircle className="h-5 w-5" aria-hidden />
                 </div>
                 <h3 className="mb-2 text-[15px] font-semibold text-paper">Failed to load live queries</h3>
@@ -446,6 +587,19 @@ export default function LiveQueriesTable({
                     </div>
                 )}
 
+                {/* Server memory pressure — context for the per-query totals
+                    below so you can tell whether 26 GB of queries is half the
+                    box or eating all of it. Detailed breakdown lives on
+                    Metrics → System (this page stays focused on per-query
+                    state). */}
+                {serverMemoryTotal > 0 && (
+                    <ServerMemoryStrip
+                        used={serverMemoryUsed}
+                        total={serverMemoryTotal}
+                        pct={serverMemoryPct}
+                    />
+                )}
+
                 {/* Stats grid — editorial hairline */}
                 <div className="grid grid-cols-2 border-l border-t border-ink-500 md:grid-cols-4">
                     <StatsCard
@@ -473,7 +627,7 @@ export default function LiveQueriesTable({
                 {/* Toolbar: Search + Controls */}
                 <div className="flex flex-col md:flex-row gap-4">
                     <div className="relative flex-1">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-paper-faint" />
                         <Input
                             placeholder="Search by query ID, user, or query text…"
                             value={searchQuery}
@@ -486,7 +640,7 @@ export default function LiveQueriesTable({
                         {/* Refresh Interval Selector */}
                         {!embedded && (
                             <div className="flex items-center gap-2">
-                                <span className="text-xs text-gray-500 whitespace-nowrap hidden sm:inline">Auto-refresh:</span>
+                                <span className="text-xs text-paper-faint whitespace-nowrap hidden sm:inline">Auto-refresh:</span>
                                 <Select
                                     value={internalRefreshInterval.toString()}
                                     onValueChange={(v) => setInternalRefreshInterval(parseInt(v))}
@@ -553,9 +707,10 @@ export default function LiveQueriesTable({
                                         <TableHead className="font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">Query ID</TableHead>
                                         <TableHead className="font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">User</TableHead>
                                         <TableHead className="font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">Query</TableHead>
-                                        <TableHead className="font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">Duration</TableHead>
-                                        <TableHead className="font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">Memory</TableHead>
-                                        <TableHead className="font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">Rows</TableHead>
+                                        <SortableTableHead label="Duration" sortKey="duration" current={sortBy} onSort={setSortBy} />
+                                        <SortableTableHead label="Memory" sortKey="memory" current={sortBy} onSort={setSortBy} />
+                                        <SortableTableHead label="Rows" sortKey="rows" current={sortBy} onSort={setSortBy} />
+                                        <SortableTableHead label="CPU" sortKey="cpu" current={sortBy} onSort={setSortBy} />
                                         <TableHead className="w-[80px] font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">Action</TableHead>
                                     </TableRow>
                                 </TableHeader>
@@ -592,8 +747,8 @@ export default function LiveQueriesTable({
                             </p>
                         </div>
                         {queryToKill && (
-                            <div className="text-xs text-gray-400">
-                                Query ID: <code className="text-gray-300">{queryToKill}</code>
+                            <div className="text-xs text-paper-faint">
+                                Query ID: <code className="text-paper-muted">{queryToKill}</code>
                             </div>
                         )}
                     </div>

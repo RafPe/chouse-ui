@@ -73,14 +73,19 @@ type TabKey =
   | "schema"
   | "cluster";
 
-interface TabCardProps {
+interface TabPillProps {
   tabKey: TabKey;
   isActive: boolean;
   onClick: () => void;
   disabled?: boolean;
 }
 
-function TabCard({ tabKey, isActive, onClick, disabled }: TabCardProps) {
+/**
+ * Compact horizontal tab — icon + label + optional Live badge. Active row
+ * grows a brand underline. Mirrors the in-page sub-tab style (Queries /
+ * Patterns / By table / Histogram) so the navigation feels unified.
+ */
+function TabPill({ tabKey, isActive, onClick, disabled }: TabPillProps) {
   const config = TAB_CONFIG[tabKey];
   const Icon = config.icon;
 
@@ -91,46 +96,25 @@ function TabCard({ tabKey, isActive, onClick, disabled }: TabCardProps) {
       disabled={disabled}
       aria-pressed={isActive}
       className={cn(
-        "group relative flex min-w-[200px] items-start gap-3 border border-ink-500 px-4 py-3 text-left transition-colors",
-        "rounded-xs",
-        isActive
-          ? "border-ink-700 bg-ink-200 text-paper"
-          : "bg-ink-100 text-paper-muted hover:border-ink-700 hover:bg-ink-200 hover:text-paper",
+        "group relative inline-flex items-center gap-2 px-3 py-2 font-mono text-[11px] uppercase tracking-[0.14em] transition-colors",
+        isActive ? "text-paper" : "text-paper-muted hover:text-paper",
         disabled && "cursor-not-allowed opacity-50"
       )}
     >
-      <span
-        className={cn(
-          "grid h-8 w-8 shrink-0 place-items-center rounded-xs border transition-colors",
-          isActive
-            ? "border-brand bg-ink-100 text-brand"
-            : "border-ink-500 bg-ink-200 text-paper-muted group-hover:border-ink-700"
-        )}
-      >
-        <Icon className="h-4 w-4" aria-hidden />
-      </span>
-
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="flex items-center gap-2">
-          <span
-            className={cn(
-              "text-[13px] font-semibold",
-              isActive ? "text-paper" : "text-paper-muted group-hover:text-paper"
-            )}
-          >
-            {config.label}
-          </span>
-          {config.liveBadge && (
-            <span className="inline-flex items-center gap-1.5 rounded-xs border border-red-900/60 bg-red-950/40 px-1.5 py-px font-mono text-[9px] uppercase tracking-[0.16em] text-red-300">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-400" aria-hidden />
-              Live
-            </span>
-          )}
-        </div>
-        <span className="truncate font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint">
-          {config.description}
+      <Icon className={cn("h-3.5 w-3.5", isActive ? "text-brand" : "text-paper-dim group-hover:text-paper")} aria-hidden />
+      <span>{config.label}</span>
+      {config.liveBadge && (
+        <span className="inline-flex items-center gap-1 rounded-xs border border-red-300 bg-red-50 px-1 py-px font-mono text-[8px] uppercase tracking-[0.16em] text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
+          <span className="h-1 w-1 animate-pulse rounded-full bg-red-500 dark:bg-red-400" aria-hidden />
+          Live
         </span>
-      </div>
+      )}
+      {isActive && (
+        <span
+          className="absolute -bottom-px left-0 right-0 h-px bg-brand"
+          aria-hidden
+        />
+      )}
     </button>
   );
 }
@@ -183,7 +167,6 @@ export default function Monitoring() {
 
   const [refreshKey, setRefreshKey] = useState(0);
   const [autoRefresh, setAutoRefresh] = useState(false);
-  const [timeRange, setTimeRange] = useState("1h");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string>(new Date().toLocaleTimeString());
 
@@ -206,21 +189,37 @@ export default function Monitoring() {
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-ink-50">
-      {/* ─── Header ─── */}
-      <header className="flex-none border-b border-ink-500 px-6 pb-4 pt-6">
-        <div className="mb-5 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xs border border-ink-500 bg-ink-100 text-paper-muted">
-              <Activity className="h-4 w-4" aria-hidden />
+      {/* ─── Header — compact: title + tabs share one row on laptop ─── */}
+      <header className="flex-none border-b border-ink-500 px-6 pt-4">
+        <div className="flex flex-wrap items-end justify-between gap-4 pb-0">
+          <div className="flex items-center gap-3">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xs border border-ink-500 bg-ink-100 text-paper-muted">
+              <Activity className="h-3.5 w-3.5" aria-hidden />
             </span>
-            <div className="flex flex-col gap-1">
-              <span className="inline-flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.18em] text-paper-faint">
-                <span className="h-px w-6 bg-ink-700" aria-hidden />
-                <span>Observability</span>
+            <div className="flex flex-col gap-0">
+              <span className="font-mono text-[9px] uppercase tracking-[0.18em] text-paper-faint">
+                Observability
               </span>
-              <h1 className="text-2xl font-semibold tracking-tight text-paper">Monitoring</h1>
+              <h1 className="text-[18px] font-semibold leading-tight tracking-tight text-paper">
+                Monitoring
+              </h1>
             </div>
           </div>
+
+          {/* Tab pills — horizontal, single line, underline active */}
+          <nav
+            aria-label="Monitoring sections"
+            className="scrollbar-hide -mb-px flex items-center overflow-x-auto"
+          >
+            {availableTabs.map((tabKey) => (
+              <TabPill
+                key={tabKey}
+                tabKey={tabKey}
+                isActive={activeTab === tabKey}
+                onClick={() => navigate(`/monitoring/${tabKey}`)}
+              />
+            ))}
+          </nav>
 
           <div className="flex items-center gap-2">
             <DataControls
@@ -229,37 +228,22 @@ export default function Monitoring() {
               onRefresh={handleRefresh}
               autoRefresh={autoRefresh}
               onAutoRefreshChange={handleAutoRefreshChange}
-              showTimeRange={activeTab === "metrics"}
-              timeRange={timeRange}
-              onTimeRangeChange={setTimeRange}
             />
             <Button
               variant="ghost"
               size="icon"
               onClick={() => setIsInfoOpen(true)}
-              className="h-9 w-9 rounded-xs text-paper-dim hover:bg-ink-200 hover:text-paper"
+              className="h-8 w-8 rounded-xs text-paper-dim hover:bg-ink-200 hover:text-paper"
               aria-label="About monitoring"
             >
               <InfoIcon className="h-4 w-4" />
             </Button>
           </div>
         </div>
-
-        {/* Tab cards */}
-        <div className="scrollbar-hide flex gap-2 overflow-x-auto pb-0.5">
-          {availableTabs.map((tabKey) => (
-            <TabCard
-              key={tabKey}
-              tabKey={tabKey}
-              isActive={activeTab === tabKey}
-              onClick={() => navigate(`/monitoring/${tabKey}`)}
-            />
-          ))}
-        </div>
       </header>
 
       {/* ─── Content ─── */}
-      <div className="flex-1 overflow-hidden p-6">
+      <div className="flex-1 overflow-hidden p-4">
         {activeTab === "live-queries" && canViewLiveQueries && (
           <div className="h-full overflow-hidden rounded-md border border-ink-500 bg-ink-100">
             <LiveQueriesTable
@@ -288,7 +272,6 @@ export default function Monitoring() {
               embedded
               refreshKey={refreshKey}
               autoRefresh={autoRefresh}
-              timeRange={timeRange}
               onRefreshChange={setIsRefreshing}
             />
           </div>

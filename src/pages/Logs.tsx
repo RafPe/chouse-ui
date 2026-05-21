@@ -31,7 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
+import { RangePickerDrilldown } from "@/components/monitoring/RangePickerDrilldown";
 import {
   Dialog,
   DialogContent,
@@ -43,9 +43,12 @@ import { useQueryLogs, usePaginationPreference, useLogsPreferences } from "@/hoo
 import {
   useClusterMemoryTotal,
   useQueryByTable,
+  useQueryByRedashId,
   useQueryPatterns,
   useQueryProfileEvents,
   useQueryViewsLog,
+  type ByRedashRow,
+  type ByRedashSort,
   type ByTableRow,
   type ByTableSort,
   type HistogramMetric,
@@ -365,13 +368,15 @@ export default function LogsPage({
       )
     : timeRangeHours;
 
-  // Sub-view inside Logs — flat query list, aggregated patterns, by-table, or histogram.
-  const [view, setView] = useState<"queries" | "patterns" | "tables" | "histogram">("queries");
+  // Sub-view inside Logs — flat query list, aggregated patterns, by-table, by-redash, or histogram.
+  const [view, setView] = useState<"queries" | "patterns" | "tables" | "redash" | "histogram">("queries");
   const [histogramMetric, setHistogramMetric] = useState<HistogramMetric>("duration");
   const [patternSort, setPatternSort] = useState<QueryPatternSort>("total_duration_ms");
   const [patternPage, setPatternPage] = useState(0);
   const [byTableSort, setByTableSort] = useState<ByTableSort>("total_duration_ms");
   const [byTablePage, setByTablePage] = useState(0);
+  const [redashSort, setRedashSort] = useState<ByRedashSort>("total_duration_ms");
+  const [redashPage, setRedashPage] = useState(0);
 
   const {
     data: patterns = [],
@@ -437,6 +442,39 @@ export default function LogsPage({
   const paginatedByTable = useMemo(
     () => byTable.slice(byTableStart, byTableEnd),
     [byTable, byTableStart, byTableEnd]
+  );
+
+  const {
+    data: byRedash = [],
+    isLoading: byRedashLoading,
+    isFetching: byRedashFetching,
+    error: byRedashError,
+  } = useQueryByRedashId(
+    effectiveHours,
+    redashSort,
+    500,
+    customRangeSql,
+    { enabled: view === "redash" }
+  );
+
+  useEffect(() => {
+    setRedashPage(0);
+  }, [
+    redashSort,
+    timeRangeHours,
+    customRangeSql?.start,
+    customRangeSql?.end,
+    view,
+  ]);
+
+  const byRedashTotalRows = byRedash.length;
+  const byRedashTotalPages = Math.max(1, Math.ceil(byRedashTotalRows / pageSize));
+  const byRedashSafePage = Math.min(redashPage, byRedashTotalPages - 1);
+  const byRedashStart = byRedashSafePage * pageSize;
+  const byRedashEnd = Math.min(byRedashStart + pageSize, byRedashTotalRows);
+  const paginatedByRedash = useMemo(
+    () => byRedash.slice(byRedashStart, byRedashEnd),
+    [byRedash, byRedashStart, byRedashEnd]
   );
 
   const toggleSort = (key: SortKey) => {
@@ -831,24 +869,15 @@ export default function LogsPage({
                   </div>
 
                   {/* Calendar column */}
-                  <div className="flex flex-col p-3">
-                    <span className="px-1 pb-2 font-mono text-[9px] uppercase tracking-[0.18em] text-paper-faint">
-                      Custom range
-                    </span>
-                    <Calendar
-                      mode="range"
-                      selected={{ from: customRange?.from, to: customRange?.to }}
-                      onSelect={(r) => setCustomRange({ from: r?.from, to: r?.to })}
-                      numberOfMonths={2}
-                      className="pointer-events-auto"
-                      classNames={{
-                        day_selected:
-                          "bg-brand text-ink-50 hover:bg-brand-soft focus:bg-brand rounded-xs",
-                        day_today: "bg-ink-200 text-paper rounded-xs",
-                        range_middle: "bg-brand/10 text-brand !rounded-none",
-                      }}
+                  <div className="flex w-[300px] flex-col">
+                    <RangePickerDrilldown
+                      range={customRange}
+                      onChange={(r) =>
+                        setCustomRange(r ? { from: r.from, to: r.to } : null)
+                      }
                     />
-                    <div className="mt-3 flex items-center justify-between gap-3 border-t border-ink-500 pt-3">
+
+                    <div className="flex items-center justify-between gap-3 border-t border-ink-500 px-3 py-3">
                       <button
                         type="button"
                         onClick={() => {
@@ -861,19 +890,23 @@ export default function LogsPage({
                       </button>
                       <button
                         type="button"
-                        disabled={!customRange?.from || !customRange?.to}
+                        disabled={!customRange?.from}
                         onClick={() => {
-                          if (customRange?.from && !customRange.to) {
-                            setCustomRange({
-                              from: customRange.from,
-                              to: customRange.from,
-                            });
-                          }
+                          if (!customRange?.from) return;
+                          // Normalise: pick one day → span the full day
+                          // (00:00:00 → 23:59:59.999). Pick a range → from
+                          // snaps to start of its day, to to end of its day.
+                          const from = new Date(customRange.from);
+                          from.setHours(0, 0, 0, 0);
+                          const toBase = customRange.to ?? customRange.from;
+                          const to = new Date(toBase);
+                          to.setHours(23, 59, 59, 999);
+                          setCustomRange({ from, to });
                           setRangePopoverOpen(false);
                         }}
                         className="rounded-xs bg-brand px-3 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-50 hover:bg-brand-soft disabled:opacity-40"
                       >
-                        Apply range
+                        Apply
                       </button>
                     </div>
                   </div>
@@ -924,6 +957,7 @@ export default function LogsPage({
             { id: "queries", label: "Queries", hint: "Every execution" },
             { id: "patterns", label: "Patterns", hint: "Grouped by query shape" },
             { id: "tables", label: "By table", hint: "Hot tables" },
+            { id: "redash", label: "By Redash", hint: "Grouped by Redash query_id" },
             { id: "histogram", label: "Histogram", hint: "Metric distribution" },
           ].map((tab) => {
             const active = view === tab.id;
@@ -1030,32 +1064,62 @@ export default function LogsPage({
                   clusterMemoryBytes={clusterMemoryBytes}
                 />
               )
-            ) : byTableLoading ? (
+            ) : view === "tables" ? (
+              byTableLoading ? (
+                <table className="w-full">
+                  <tbody>
+                    <SkeletonRows count={10} cols={7} />
+                  </tbody>
+                </table>
+              ) : byTableError ? (
+                <div className="flex h-64 flex-col items-center justify-center gap-2 px-4 text-center">
+                  <span className="text-[13px] text-paper">Couldn't load by-table rollup</span>
+                  <span className="text-[12px] text-paper-muted">{byTableError.message}</span>
+                </div>
+              ) : byTableTotalRows === 0 ? (
+                <div className="flex h-64 flex-col items-center justify-center gap-2 px-4 text-center">
+                  <span className="grid h-12 w-12 place-items-center rounded-xs border border-ink-500 bg-ink-200 text-paper-dim">
+                    <FileText className="h-5 w-5" aria-hidden />
+                  </span>
+                  <span className="text-[13px] text-paper">No table activity</span>
+                  <span className="text-[12px] text-paper-muted">
+                    Widen the time range — needs queries that touched user tables.
+                  </span>
+                </div>
+              ) : (
+                <ByTableTable
+                  rows={paginatedByTable}
+                  sortKey={byTableSort}
+                  onSort={setByTableSort}
+                  clusterMemoryBytes={clusterMemoryBytes}
+                />
+              )
+            ) : byRedashLoading ? (
               <table className="w-full">
                 <tbody>
                   <SkeletonRows count={10} cols={7} />
                 </tbody>
               </table>
-            ) : byTableError ? (
+            ) : byRedashError ? (
               <div className="flex h-64 flex-col items-center justify-center gap-2 px-4 text-center">
-                <span className="text-[13px] text-paper">Couldn't load by-table rollup</span>
-                <span className="text-[12px] text-paper-muted">{byTableError.message}</span>
+                <span className="text-[13px] text-paper">Couldn't load Redash rollup</span>
+                <span className="text-[12px] text-paper-muted">{byRedashError.message}</span>
               </div>
-            ) : byTableTotalRows === 0 ? (
+            ) : byRedashTotalRows === 0 ? (
               <div className="flex h-64 flex-col items-center justify-center gap-2 px-4 text-center">
                 <span className="grid h-12 w-12 place-items-center rounded-xs border border-ink-500 bg-ink-200 text-paper-dim">
                   <FileText className="h-5 w-5" aria-hidden />
                 </span>
-                <span className="text-[13px] text-paper">No table activity</span>
+                <span className="text-[13px] text-paper">No Redash queries</span>
                 <span className="text-[12px] text-paper-muted">
-                  Widen the time range — needs queries that touched user tables.
+                  Nothing with a Redash <code>query_id</code> comment in the window.
                 </span>
               </div>
             ) : (
-              <ByTableTable
-                rows={paginatedByTable}
-                sortKey={byTableSort}
-                onSort={setByTableSort}
+              <ByRedashTable
+                rows={paginatedByRedash}
+                sortKey={redashSort}
+                onSort={setRedashSort}
                 clusterMemoryBytes={clusterMemoryBytes}
               />
             )}
@@ -1106,7 +1170,22 @@ export default function LogsPage({
             />
           )}
 
-          {(patternsFetching || byTableFetching) && (
+          {view === "redash" && byRedashTotalRows > 0 && (
+            <PaginationBar
+              page={byRedashSafePage}
+              totalPages={byRedashTotalPages}
+              startIndex={byRedashStart}
+              endIndex={byRedashEnd}
+              totalRows={byRedashTotalRows}
+              rowLabel="redash queries"
+              onPrev={() => setRedashPage((p) => Math.max(0, p - 1))}
+              onNext={() => setRedashPage((p) => Math.min(byRedashTotalPages - 1, p + 1))}
+              onFirst={() => setRedashPage(0)}
+              onLast={() => setRedashPage(byRedashTotalPages - 1)}
+            />
+          )}
+
+          {(patternsFetching || byTableFetching || byRedashFetching) && (
             <span className="sr-only" aria-live="polite">Refreshing…</span>
           )}
         </div>
@@ -1801,6 +1880,166 @@ function ByTableTableRow({
           tier={memTier}
           ratioPct={memRatioPct}
         />
+      </td>
+    </tr>
+  );
+}
+
+/* ============================================================
+   By Redash table — group by query_id extracted from Redash's
+   leading SQL comment /* …, query_id: NNN, … *\/. Mirrors the
+   Patterns columns so DE/Data Platform can spot which saved
+   Redash query is dominating the cluster.
+   ============================================================ */
+
+interface ByRedashColumn {
+  key: ByRedashSort | null;
+  label: string;
+  align: "left" | "right";
+  w?: string;
+}
+
+const BY_REDASH_COLUMNS: ByRedashColumn[] = [
+  { key: null, label: "Redash ID · user", align: "left" },
+  { key: "executions", label: "Runs", align: "right", w: "w-[80px]" },
+  // Combined "min / avg / max" duration cell — sorts by avg by default,
+  // header is hint-text only. Two extra sort buttons for min and max sit
+  // in the next two narrow columns.
+  { key: "avg_duration_ms", label: "Avg dur", align: "right", w: "w-[88px]" },
+  { key: "min_duration_ms", label: "Min dur", align: "right", w: "w-[80px]" },
+  { key: "max_duration_ms", label: "Max dur", align: "right", w: "w-[88px]" },
+  { key: "total_duration_ms", label: "Total dur", align: "right", w: "w-[100px]" },
+  { key: "min_memory", label: "Min mem", align: "right", w: "w-[80px]" },
+  { key: "max_memory", label: "Max mem", align: "right", w: "w-[92px]" },
+  { key: "total_read_rows", label: "Read rows", align: "right", w: "w-[112px]" },
+  { key: "total_read_bytes", label: "Read bytes", align: "right", w: "w-[108px]" },
+];
+
+interface ByRedashTableProps {
+  rows: ByRedashRow[];
+  sortKey: ByRedashSort;
+  onSort: (key: ByRedashSort) => void;
+  clusterMemoryBytes: number;
+}
+
+function ByRedashTable({ rows, sortKey, onSort, clusterMemoryBytes }: ByRedashTableProps) {
+  return (
+    <TooltipProvider delayDuration={300}>
+    <table className="w-full text-[12px]">
+      <thead className="sticky top-0 z-10 bg-ink-200/90 backdrop-blur">
+        <tr className="border-b border-ink-500">
+          {BY_REDASH_COLUMNS.map((c, i) => {
+            const isActive = c.key !== null && c.key === sortKey;
+            const sortable = c.key !== null;
+            return (
+              <th
+                key={`${c.label}-${i}`}
+                className={cn(
+                  "px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-faint",
+                  c.align === "right" ? "text-right" : "text-left",
+                  c.w
+                )}
+              >
+                {sortable ? (
+                  <button
+                    type="button"
+                    onClick={() => onSort(c.key as ByRedashSort)}
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-xs transition-colors hover:text-paper",
+                      c.align === "right" && "flex-row-reverse",
+                      isActive && "text-brand"
+                    )}
+                    aria-label={`Sort by ${c.label}`}
+                  >
+                    <span>{c.label}</span>
+                    {isActive ? (
+                      <ArrowDown className="h-3 w-3" aria-hidden />
+                    ) : (
+                      <ArrowUpDown className="h-2.5 w-2.5 opacity-40" aria-hidden />
+                    )}
+                  </button>
+                ) : (
+                  c.label
+                )}
+              </th>
+            );
+          })}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r, i) => (
+          <ByRedashTableRow
+            key={`${r.redash_query_id}-${i}`}
+            row={r}
+            clusterMemoryBytes={clusterMemoryBytes}
+          />
+        ))}
+      </tbody>
+    </table>
+    </TooltipProvider>
+  );
+}
+
+function ByRedashTableRow({
+  row,
+  clusterMemoryBytes,
+}: {
+  row: ByRedashRow;
+  clusterMemoryBytes: number;
+}) {
+  const memTier = memoryTier(row.max_memory, clusterMemoryBytes);
+  const memRatioPct =
+    clusterMemoryBytes > 0 ? (row.max_memory / clusterMemoryBytes) * 100 : 0;
+
+  const minMemTier = memoryTier(row.min_memory, clusterMemoryBytes);
+  const minMemRatioPct =
+    clusterMemoryBytes > 0 ? (row.min_memory / clusterMemoryBytes) * 100 : 0;
+
+  return (
+    <tr className="border-b border-ink-500/60 transition-colors hover:bg-ink-200/60">
+      <td className="px-3 py-1.5 font-mono">
+        <span className="text-paper">#{row.redash_query_id}</span>
+        {row.redash_username && (
+          <>
+            <span className="text-paper-faint"> · </span>
+            <span className="text-paper-muted">{row.redash_username}</span>
+          </>
+        )}
+      </td>
+      <td className="px-3 py-1.5 text-right font-mono tabular-nums text-paper">
+        {row.executions.toLocaleString()}
+      </td>
+      <td className="px-3 py-1.5 text-right font-mono text-paper">
+        {formatDuration(row.avg_duration_ms)}
+      </td>
+      <td className="px-3 py-1.5 text-right font-mono text-paper-muted">
+        {formatDuration(row.min_duration_ms)}
+      </td>
+      <td className="px-3 py-1.5 text-right font-mono text-paper-muted">
+        {formatDuration(row.max_duration_ms)}
+      </td>
+      <td className="px-3 py-1.5 text-right font-mono text-paper">
+        {formatDuration(row.total_duration_ms)}
+      </td>
+      <td className="px-3 py-1.5 text-right font-mono">
+        <MemoryCell
+          bytes={row.min_memory}
+          tier={minMemTier}
+          ratioPct={minMemRatioPct}
+        />
+      </td>
+      <td className="px-3 py-1.5 text-right font-mono">
+        <MemoryCell
+          bytes={row.max_memory}
+          tier={memTier}
+          ratioPct={memRatioPct}
+        />
+      </td>
+      <td className="px-3 py-1.5 text-right font-mono text-paper-muted">
+        {row.total_read_rows.toLocaleString()}
+      </td>
+      <td className="px-3 py-1.5 text-right font-mono text-paper-muted">
+        {formatBytes(row.total_read_bytes)}
       </td>
     </tr>
   );

@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState } from "react";
 import uPlot from "uplot";
 import { formatBytes, formatCompactNumber } from "@/lib/utils";
+import { useTheme } from "@/components/common/theme-provider";
 
 interface MetricData {
   timestamps: number[];
@@ -29,6 +30,25 @@ const UPlotMetricItemComponent: React.FC<UPlotMetricItemComponentProps> = ({
   const chartRef = useRef<HTMLDivElement>(null);
   const uplotRef = useRef<uPlot | null>(null);
   const [hoveredValues, setHoveredValues] = useState<{ time: string; values: { label: string; value: string; color: string }[] } | null>(null);
+  const { resolvedTheme } = useTheme();
+
+  // uPlot draws onto a canvas with no CSS hooks, so we feed it an axis palette
+  // keyed off resolvedTheme. The dark side keeps the existing white/X rgba
+  // values; the light side uses dark-on-warm-stone equivalents so labels stay
+  // readable on the new paper background.
+  const axisPalette = resolvedTheme === "light"
+    ? {
+        stroke: "rgba(28, 25, 23, 0.55)",   // stone-900-ish for tick labels
+        grid: "rgba(28, 25, 23, 0.08)",     // hairline gridlines
+        ticks: "rgba(28, 25, 23, 0.20)",    // tick marks
+        cursorPoint: "rgba(28, 25, 23, 0.85)",
+      }
+    : {
+        stroke: "rgba(255, 255, 255, 0.3)",
+        grid: "rgba(255, 255, 255, 0.05)",
+        ticks: "rgba(255, 255, 255, 0.1)",
+        cursorPoint: "#fff",
+      };
 
   // Helper to format values based on title/unit
   const formatValue = (val: number) => {
@@ -93,7 +113,7 @@ const UPlotMetricItemComponent: React.FC<UPlotMetricItemComponentProps> = ({
           show: true,
           size: 8,
           // fill: color, // Removed global fill
-          stroke: "#fff",
+          stroke: axisPalette.cursorPoint,
           width: 2,
         },
         drag: {
@@ -132,13 +152,13 @@ const UPlotMetricItemComponent: React.FC<UPlotMetricItemComponentProps> = ({
       },
       axes: [
         {
-          stroke: "rgba(255,255,255,0.3)",
+          stroke: axisPalette.stroke,
           grid: {
-            stroke: "rgba(255,255,255,0.05)",
+            stroke: axisPalette.grid,
             width: 1,
           },
           ticks: {
-            stroke: "rgba(255,255,255,0.1)",
+            stroke: axisPalette.ticks,
             width: 1,
             size: 5,
           },
@@ -150,13 +170,13 @@ const UPlotMetricItemComponent: React.FC<UPlotMetricItemComponentProps> = ({
           }),
         },
         {
-          stroke: "rgba(255,255,255,0.3)",
+          stroke: axisPalette.stroke,
           grid: {
-            stroke: "rgba(255,255,255,0.05)",
+            stroke: axisPalette.grid,
             width: 1,
           },
           ticks: {
-            stroke: "rgba(255,255,255,0.1)",
+            stroke: axisPalette.ticks,
             width: 1,
             size: 5,
           },
@@ -215,11 +235,11 @@ const UPlotMetricItemComponent: React.FC<UPlotMetricItemComponentProps> = ({
         uplotRef.current.destroy();
       }
     };
-  }, [data, title, colors, fill, height]);
+  }, [data, title, colors, fill, height, resolvedTheme]);
 
   if (!data.timestamps.length) {
     return (
-      <div className="flex items-center justify-center h-full text-gray-500">
+      <div className="flex items-center justify-center h-full text-paper-faint">
         No data available
       </div>
     );
@@ -229,14 +249,14 @@ const UPlotMetricItemComponent: React.FC<UPlotMetricItemComponentProps> = ({
     <div className="relative w-full h-full">
       {/* Hover tooltip */}
       {hoveredValues && (
-        <div className="absolute top-2 right-2 z-10 px-3 py-2 rounded-lg bg-black/80 border border-white/10 backdrop-blur-md pointer-events-none">
-          <div className="text-xs text-gray-400 mb-1">{hoveredValues.time}</div>
+        <div className="absolute top-2 right-2 z-10 px-3 py-2 rounded-xs bg-ink-100 border border-ink-500 shadow-sm backdrop-blur-md pointer-events-none">
+          <div className="text-xs text-paper-muted mb-1">{hoveredValues.time}</div>
           <div className="flex flex-col gap-1">
             {hoveredValues.values.map((v, i) => (
               <div key={i} className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full" style={{ backgroundColor: v.color }} />
-                <span className="text-xs text-gray-300">{v.label}:</span>
-                <span className="text-sm font-medium text-white">{v.value}{unit}</span>
+                <span className="text-xs text-paper-muted">{v.label}:</span>
+                <span className="text-sm font-medium text-paper">{v.value}{unit}</span>
               </div>
             ))}
           </div>
