@@ -1,5 +1,6 @@
 import Navbar from './components/Navbar';
 import Hero from './components/Hero';
+import WhatsNew from './components/WhatsNew';
 import Features from './components/Features';
 import ScreenshotGallery from './components/ScreenshotGallery';
 import TryLab from './components/TryLab';
@@ -16,6 +17,7 @@ function App() {
     <div className="min-h-screen bg-[#0a0a0a]">
       <Navbar />
       <Hero />
+      <WhatsNew />
       <Features />
       <ScreenshotGallery />
       <TryLab />
