@@ -105,11 +105,12 @@ export default function Hero() {
               transition={{ duration: 0.6, delay: 0.08, ease: [0.16, 1, 0.3, 1] }}
               className="mt-8 max-w-xl text-lg leading-relaxed text-paper-muted"
             >
-              Open-source console for ClickHouse with{" "}
-              <span className="text-paper">first-class RBAC</span> and a SQL workspace — now a{" "}
-              <span className="text-paper">multi-cluster fleet monitor</span> with an autonomous{" "}
-              <span className="text-paper">AI SRE</span> that finds root cause and writes the fix.
-              Read-only. On-prem. Yours.
+              What started as a single-connection console grew into the{" "}
+              <span className="text-paper">combination</span> most ClickHouse tools only do a
+              piece of — <span className="text-paper">first-class RBAC</span>,{" "}
+              <span className="text-paper">multi-cluster fleet monitoring</span>, and an autonomous{" "}
+              <span className="text-paper">AI SRE</span> that finds the root cause and writes the
+              fix. Read-only. On-prem. Yours.
             </motion.p>
 
             {/* Actions */}
