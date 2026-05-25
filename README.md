@@ -35,7 +35,7 @@
 
 ## Overview
 
-CHouse UI is a web interface for managing ClickHouse databases with server-side credential management and **Role-Based Access Control (RBAC)**. Credentials are stored encrypted on the server, and access is controlled through a permission system. Beyond the query workspace it ships **multi-cluster fleet monitoring** and **Chouse AI** — an autonomous, read-only SRE that runs root-cause fleet scans, optimizes queries and diagnoses errors right in the monitoring tabs, and delivers alerts + auto-RCA to Slack/email. So you never copy-paste an error into a chatbot or hunt for a rewrite — the diagnosis and the fix live next to the problem.
+CHouse UI is the team operator's console for on-prem ClickHouse. Most tools nail one piece — a query workspace, a dashboard, an AI assistant, a cluster monitor; this is the **combination**: a team access layer (app-level **RBAC**, audit logging, and encrypted server-side credentials so the browser never sees a password), **multi-cluster fleet monitoring** with Slack/email alerts, and **Chouse AI** — an autonomous, read-only SRE that runs root-cause scans, optimizes queries and diagnoses errors right in the monitoring tabs, writes fixes with before→after `EXPLAIN` proof, and delivers RCA to Slack on a breach. Open-source and Apache 2.0 — so you never copy-paste an error into a chatbot or hunt for a rewrite; the diagnosis and the fix live next to the problem.
 
 ### Why CHouse UI?
 
