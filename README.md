@@ -35,7 +35,7 @@
 
 ## Overview
 
-CHouse UI is a web interface for managing ClickHouse databases with server-side credential management and **Role-Based Access Control (RBAC)**. Credentials are stored encrypted on the server, and access is controlled through a permission system. Beyond the query workspace it ships **multi-cluster fleet monitoring** and **Chouse AI** — an autonomous, read-only SRE that runs root-cause fleet scans and delivers alerts + auto-RCA to Slack/email.
+CHouse UI is a web interface for managing ClickHouse databases with server-side credential management and **Role-Based Access Control (RBAC)**. Credentials are stored encrypted on the server, and access is controlled through a permission system. Beyond the query workspace it ships **multi-cluster fleet monitoring** and **Chouse AI** — an autonomous, read-only SRE that runs root-cause fleet scans, optimizes queries and diagnoses errors right in the monitoring tabs, and delivers alerts + auto-RCA to Slack/email.
 
 ### Why CHouse UI?
 
@@ -50,7 +50,7 @@ CHouse UI provides security and access control features for teams that need:
 | **Audit Trail** | Audit logging |
 | **Monitoring** | ClickHouse-native observability — query logs, memory breakdown, top-resource queries, replica lag, parts/merges, schema lints — no exporter required |
 | **Fleet view** | Watch every cluster at once — one pane, per-card polling, status / memory / lag / exceptions, drill into any node |
-| **Chouse AI (SRE)** | Autonomous read-only diagnostics — root-cause fleet scans, structured reports with history, and auto-RCA delivered to Slack/email on alert breach |
+| **Chouse AI (SRE)** | Autonomous read-only diagnostics — root-cause fleet scans with history + auto-RCA to Slack/email, plus in-tab query optimization (before→after `EXPLAIN`) and error/parts diagnosis |
 
 > **Note**: Other ClickHouse tools serve different use cases well. CHouse UI is designed specifically for teams requiring centralized credential management, role-based access control, and audit capabilities.
 
@@ -107,6 +107,7 @@ CHouse UI provides security and access control features for teams that need:
 - **Fleet poller** — a backend worker caches per-cluster metric snapshots to SQLite on a schedule (`FLEET_POLL_INTERVAL_SECONDS`), so the fleet page reads one fast endpoint instead of every browser hammering every cluster. HA-safe via a single-instance advisory lease. Toggle with `FLEET_POLLER_ENABLED`.
 - **Threshold alerts** — node memory %, per-query memory, and long-running-query rules with hysteresis to avoid flapping. Delivered as Slack Block Kit cards + email (SMTP), configured per install.
 - **Chouse AI — Fleet Doctor** (`/doctor`) — an autonomous, **read-only** AI SRE. Scans the fleet with a guarded `query_node` tool (single `SELECT`, `system.*` only, ClickHouse `readonly=1`), pins root causes, and writes a structured report: per-node verdict, recommendations, evidence, and a heavy-query deep-dive. Reports persist with a history rail; scope (node subset) + time-window selectable. On an alert breach it can auto-run RCA and deliver the analysis to Slack/email. Advisory only — the AI never mutates the cluster.
+- **Chouse AI in the monitoring tabs** — the same read-only engine surfaced where you're already looking, so you fix a problem without leaving the tab. **Optimize with Chouse AI** on a Query Logs row → an optimized rewrite with the same result, a before→after `EXPLAIN` estimate, and one click to **Open in Explorer**. **Fix** on a `system.errors` row → cause / impact / ordered solutions. **Diagnose** on a part-log row → part-health read (merge pressure, too many parts, partition key). Gated by `ai:optimize`; advisory only — review before running.
 - **Errors** (`/errors`) — a viewer over `system.errors` + the crash log, searchable and paginated, so recurring server-side errors surface without ad-hoc SQL.
 
 ### 🎨 User Experience
@@ -361,7 +362,7 @@ Features:
 - **User Management**: Create, update, delete users
 - **Role Management**: Manage roles and permissions
 - **Connection Management**: Add/edit ClickHouse connections
-- **Query Operations**: Execute queries, DML, DDL
+- **Query Operations**: Execute queries, DML, DDL; `ai:optimize` (in-tab AI query optimization + error/parts diagnosis)
 - **Table Operations**: Select, insert, update, delete
 - **Metrics & Monitoring**: Per-tab view grants — `logs:view`, `parts:view`, `schema_advisor:view`, `cluster:view`, `errors:view`
 - **Fleet Monitoring**: `fleet:view`, `doctor:view` (read reports), `doctor:run` (generate scans + schedules)
