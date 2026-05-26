@@ -83,7 +83,7 @@ export default function FleetAlertDeliveryDialog({
     setEmailTo(data.email.to);
     setEmailPassword("");
     setSlackEnabled(data.slack.enabled);
-    setGoogleChatEnabled(data.googleChat.enabled);
+    setGoogleChatEnabled(data.googleChat?.enabled ?? true);
     setEmailEnabled(data.email.enabled);
   }, [data]);
 
@@ -139,7 +139,7 @@ export default function FleetAlertDeliveryDialog({
   });
 
   const busy = save.isPending || remove.isPending;
-  const canTest = Boolean(data?.slack.configured || data?.googleChat.configured || data?.email.configured);
+  const canTest = Boolean(data?.slack.configured || data?.googleChat?.configured || data?.email.configured);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -240,7 +240,7 @@ export default function FleetAlertDeliveryDialog({
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-2 text-[13px] font-medium text-paper">
                   <MessagesSquare className="h-3.5 w-3.5 text-paper-muted" aria-hidden /> Google Chat
-                  {data?.googleChat.configured && (
+                  {data?.googleChat?.configured && (
                     <span className="rounded-xs border border-emerald-300 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-emerald-600 dark:border-emerald-500/50 dark:text-emerald-400">
                       Configured
                     </span>
@@ -251,10 +251,10 @@ export default function FleetAlertDeliveryDialog({
               <Input
                 value={googleChatUrl}
                 onChange={(e) => setGoogleChatUrl(e.target.value)}
-                placeholder={data?.googleChat.configured ? "•••• keep current webhook (paste to replace)" : "https://chat.googleapis.com/v1/spaces/…"}
+                placeholder={data?.googleChat?.configured ? "•••• keep current webhook (paste to replace)" : "https://chat.googleapis.com/v1/spaces/…"}
                 className={cn(inputCls, !googleChatEnabled && "opacity-50")}
               />
-              {data?.googleChat.configured && (
+              {data?.googleChat?.configured && (
                 <button
                   type="button"
                   onClick={() => remove.mutate("googleChat")}
