@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+
+- **Chouse AI in the Schema Advisor tabs** — the in-tab AI pattern reaches the third diagnostic surface. Every row in the Schema Advisor (Nullable / Oversized integers / Compression) gets a ✨ Fix button → modal → Chouse AI investigates that one column read-only on the connected node and returns a structured diagnosis (cause / impact / ordered solutions) ending in a concrete `ALTER TABLE` DDL: drop the Nullable wrapper if the null share allows, narrow the integer type from `min/max` sampling, or swap the codec (Delta / DoubleDelta / Gorilla / LowCardinality / a higher ZSTD level) for the compression case. Backend `diagnoseSchemaIssue()` on the Doctor agent + `POST /query/diagnose-schema` gated by `ai:optimize`. Read-only / advisory like the other surfaces.
+- **Headroom column on the Compression tab** — a client-side heuristic estimates the bytes recoverable per row if a codec swap hit the type's plafon (Delta+ZSTD for dates / small ints, Gorilla for floats, ZSTD baseline for strings, n/a for already-optimised `LowCardinality` / `Enum`). A severity tag (`high ≥10 GB` / `medium ≥1 GB` / `low` / `—`) drives a calm amber → brand → muted chip, and the column is sortable. The Compression tab now defaults to headroom DESC so the biggest opportunities surface first. The estimate is a conservative floor (codec-only, not `LowCardinality`) — clicking ✨ Fix can find a bigger win when cardinality permits.
+
+
 ## [v2.16.0] - 2026-05-25
 
 The big one: chouse-ui grows from a single-cluster console into a **multi-cluster fleet monitor with an AI SRE**. A `/fleet` page watches every connection at once, a backend poller caches snapshots, threshold alerts fire to Slack/email, and **Chouse AI** — an autonomous read-only diagnostic agent — runs root-cause analysis and writes optimized queries with before→after `EXPLAIN` proof. The closed loop is: detect → diagnose (AI) → fix (optimized SQL) → act (Open in Explorer). All read-only / advisory — the AI never mutates your cluster.
