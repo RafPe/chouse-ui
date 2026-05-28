@@ -19,6 +19,8 @@ import {
   type SchemaLintRow,
 } from "@/hooks/useMonitoringTimeline";
 import { cn } from "@/lib/utils";
+import { AiDiagnoseButton } from "@/components/monitoring/AiDiagnoseButton";
+import { diagnoseSchemaIssue } from "@/api/query";
 
 type LintView = "nullable" | "oversized" | "compression";
 
@@ -264,7 +266,7 @@ export default function SchemaDoctorPage({
             ) : view === "compression" ? (
               <CompressionTable rows={paginatedRows} sort={sort} onSort={toggleSort} />
             ) : (
-              <SchemaTable rows={paginatedRows} totalCompressed={totalCompressed} sort={sort} onSort={toggleSort} />
+              <SchemaTable rows={paginatedRows} totalCompressed={totalCompressed} sort={sort} onSort={toggleSort} view={view} />
             )}
           </div>
 
@@ -335,9 +337,10 @@ interface SchemaTableProps {
   totalCompressed: number;
   sort: SortState;
   onSort: (k: SortKey) => void;
+  view: LintView;
 }
 
-function SchemaTable({ rows, totalCompressed, sort, onSort }: SchemaTableProps) {
+function SchemaTable({ rows, totalCompressed, sort, onSort, view }: SchemaTableProps) {
   return (
     <table className="w-full text-[12px]">
       <thead className="sticky top-0 z-10 bg-ink-200/90 backdrop-blur">
@@ -349,6 +352,7 @@ function SchemaTable({ rows, totalCompressed, sort, onSort }: SchemaTableProps) 
           <SortHeaderCell label="Rows" sortKey="total_rows" align="right" sort={sort} onSort={onSort} />
           <SortHeaderCell label="On-disk" sortKey="compressed_bytes" align="right" sort={sort} onSort={onSort} />
           <SortHeaderCell label="% of total" align="right" sort={sort} onSort={onSort} />
+          <th className="px-3 py-1.5 text-right font-mono text-[10px] uppercase tracking-[0.18em] text-paper-faint">Fix</th>
         </tr>
       </thead>
       <tbody>
@@ -371,6 +375,34 @@ function SchemaTable({ rows, totalCompressed, sort, onSort }: SchemaTableProps) 
               </td>
               <td className="px-3 py-1.5 text-right">
                 <RatioBar pct={pct} />
+              </td>
+              <td className="px-3 py-1.5 text-right">
+                <AiDiagnoseButton
+                  label="Fix"
+                  title="Fix with Chouse AI"
+                  badge={`${r.database}.${r.table}.${r.column}`}
+                  subtitle={
+                    view === "nullable"
+                      ? "Chouse AI inspects this column read-only and proposes an ALTER TABLE fix to drop the Nullable wrapper (if the actual null share allows). Review before running."
+                      : "Chouse AI samples the actual value range and proposes a narrower integer type via ALTER TABLE. Review before running."
+                  }
+                  runDiagnosis={(modelId) =>
+                    diagnoseSchemaIssue(
+                      r.database,
+                      r.table,
+                      r.column,
+                      r.type,
+                      view === "nullable" ? "nullable" : "oversized",
+                      {
+                        totalRows: r.total_rows,
+                        compressedBytes: r.compressed_bytes,
+                        uncompressedBytes: r.uncompressed_bytes,
+                      },
+                      modelId,
+                    )
+                  }
+                  compact
+                />
               </td>
             </tr>
           );
@@ -423,6 +455,7 @@ function CompressionTable({
           <SortHeaderCell label="On-disk" sortKey="compressed_bytes" align="right" sort={sort} onSort={onSort} />
           <SortHeaderCell label="Raw" sortKey="uncompressed_bytes" align="right" sort={sort} onSort={onSort} />
           <SortHeaderCell label="Ratio" sortKey="ratio" align="right" sort={sort} onSort={onSort} />
+          <th className="px-3 py-1.5 text-right font-mono text-[10px] uppercase tracking-[0.18em] text-paper-faint">Fix</th>
         </tr>
       </thead>
       <tbody>
@@ -451,6 +484,30 @@ function CompressionTable({
               </td>
               <td className={cn("px-3 py-1.5 text-right font-mono tabular-nums", ratioTone)}>
                 {ratio === 0 ? "—" : ratio >= 100 ? `${Math.round(ratio)}×` : `${ratio.toFixed(1)}×`}
+              </td>
+              <td className="px-3 py-1.5 text-right">
+                <AiDiagnoseButton
+                  label="Fix"
+                  title="Fix with Chouse AI"
+                  badge={`${r.database}.${r.table}.${r.column}`}
+                  subtitle="Chouse AI inspects this column read-only and proposes a codec / type fix (Delta, Gorilla, LowCardinality, ZSTD level…) via ALTER TABLE. Review before running."
+                  runDiagnosis={(modelId) =>
+                    diagnoseSchemaIssue(
+                      r.database,
+                      r.table,
+                      r.column,
+                      r.type,
+                      "compression",
+                      {
+                        totalRows: r.total_rows,
+                        compressedBytes: r.compressed_bytes,
+                        uncompressedBytes: r.uncompressed_bytes,
+                      },
+                      modelId,
+                    )
+                  }
+                  compact
+                />
               </td>
             </tr>
           );
