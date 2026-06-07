@@ -106,6 +106,19 @@ bunx vitest run                # Frontend tests
 - Comments explain *why*, not *what* — no commented-out code
 - JSDoc only for complex functions
 
+## Pull Request Creation
+
+When creating a PR via `gh pr create`, always read `.github/pull_request_template.md` and use its structure as the `--body` content, filling in each section based on the actual changes. Never write a free-form body that skips the template sections.
+
+## Versioning & Releases
+
+When adding a new version entry to `CHANGELOG.md` (e.g. `## [2.18.0] - 2026-06-08`), always bump the `version` field to match in all three:
+- `package.json` (root)
+- `packages/server/package.json`
+- `docs/portfolio/package.json`
+
+All three must stay in sync with the CHANGELOG version at all times.
+
 ## When to Apply Each Rule
 
 | Situation | Rule file to follow |
