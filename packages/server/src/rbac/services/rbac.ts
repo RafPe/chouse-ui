@@ -671,6 +671,44 @@ export async function getUserRoles(userId: string): Promise<string[]> {
 // ============================================
 
 /**
+ * Create a session row and JWT pair for an already-verified user.
+ * Shared by password login and SSO login.
+ */
+export async function createSessionAndTokens(
+  user: User,
+  ipAddress?: string,
+  userAgent?: string
+): Promise<{ user: UserResponse; tokens: TokenPair }> {
+  const db = getDatabase() as AnyDb;
+  const schema = getSchema();
+
+  await db.update(schema.users)
+    .set({ lastLoginAt: new Date() })
+    .where(eq(schema.users.id, user.id));
+
+  const [roles, permissions] = await Promise.all([
+    getUserRoles(user.id),
+    getUserPermissions(user.id),
+  ]);
+
+  const sessionId = randomUUID();
+  const tokens = await generateTokenPair(user.id, user.email, user.username, roles, permissions, sessionId);
+
+  await db.insert(schema.sessions).values({
+    id: sessionId,
+    userId: user.id,
+    refreshToken: tokens.refreshToken,
+    ipAddress,
+    userAgent,
+    expiresAt: new Date(Date.now() + getRefreshTokenExpiryMs()),
+    createdAt: new Date(),
+  });
+
+  const userResponse = await expandUserResponse(user);
+  return { user: userResponse, tokens };
+}
+
+/**
  * Authenticate user and generate tokens
  */
 export async function authenticateUser(
@@ -700,44 +738,7 @@ export async function authenticateUser(
       .where(eq(schema.users.id, user.id));
   }
 
-  // Update last login
-  const db = getDatabase() as AnyDb;
-  const schema = getSchema();
-  await db.update(schema.users)
-    .set({ lastLoginAt: new Date() })
-    .where(eq(schema.users.id, user.id));
-
-  // Get user roles and permissions
-  const [roles, permissions] = await Promise.all([
-    getUserRoles(user.id),
-    getUserPermissions(user.id),
-  ]);
-
-  // Create session
-  const sessionId = randomUUID();
-  const tokens = await generateTokenPair(
-    user.id,
-    user.email,
-    user.username,
-    roles,
-    permissions,
-    sessionId
-  );
-
-  // Store refresh token in sessions table
-  await db.insert(schema.sessions).values({
-    id: sessionId,
-    userId: user.id,
-    refreshToken: tokens.refreshToken,
-    ipAddress,
-    userAgent,
-    expiresAt: new Date(Date.now() + getRefreshTokenExpiryMs()),
-    createdAt: new Date(),
-  });
-
-  const userResponse = await expandUserResponse(user);
-
-  return { user: userResponse, tokens };
+  return createSessionAndTokens(user, ipAddress, userAgent);
 }
 
 /**
