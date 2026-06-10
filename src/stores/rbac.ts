@@ -9,6 +9,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
   rbacAuthApi,
+  ssoApi,
   setRbacTokens,
   clearRbacTokens,
   getRbacAccessToken,
@@ -35,6 +36,7 @@ export interface RbacState {
 
   // Actions
   login: (identifier: string, password: string) => Promise<void>;
+  completeSsoLogin: (providerId: string, code: string, state: string) => Promise<string>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
   refreshUser: () => Promise<void>;
@@ -100,6 +102,46 @@ export const useRbacStore = create<RbacState>()(
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Login failed';
+          set({
+            isAuthenticated: false,
+            isLoading: false,
+            error: message,
+            user: null,
+            roles: [],
+            permissions: [],
+          });
+          throw error;
+        }
+      },
+
+      /**
+       * Complete an SSO login from the callback page.
+       * Returns the post-login redirect target supplied by the server.
+       */
+      completeSsoLogin: async (providerId: string, code: string, state: string) => {
+        set({ isLoading: true, error: null });
+
+        try {
+          const currentUserId = get().user?.id || null;
+          const { cleanupUserSession, broadcastUserChange } = await import('@/utils/sessionCleanup');
+          await cleanupUserSession(currentUserId);
+
+          const response = await ssoApi.completeCallback(providerId, code, state);
+
+          broadcastUserChange(response.user.id);
+
+          set({
+            isAuthenticated: true,
+            isLoading: false,
+            user: response.user,
+            roles: response.user.roles,
+            permissions: response.user.permissions,
+            error: null,
+          });
+
+          return response.redirect || '/';
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'SSO sign-in failed';
           set({
             isAuthenticated: false,
             isLoading: false,
