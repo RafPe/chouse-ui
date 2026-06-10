@@ -31,7 +31,9 @@ const CallbackSchema = z.object({
 
 /** Only allow same-app relative redirect targets. */
 function safeRedirect(target: string | undefined): string {
-  if (!target || !target.startsWith("/") || target.startsWith("//")) return "/";
+  if (!target || !target.startsWith("/")) return "/";
+  // Reject //host and /\host (browsers treat both as protocol-relative).
+  if (target[1] === "/" || target[1] === "\\") return "/";
   return target;
 }
 

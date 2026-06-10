@@ -213,6 +213,190 @@ describe("SSO Routes", () => {
       expect(res.status).toBe(404);
     });
 
+    it("sanitizes open-redirect: ?redirect=/\\evil.com (backslash) becomes /", async () => {
+      mockGetSsoConfig.mockReturnValue(makeEnabledConfig());
+      mockBuildAuthorizationRedirect.mockResolvedValue({
+        url: "https://idp.example.com/authorize?state=state-bs1",
+        state: "state-bs1",
+        nonce: "nonce-bs1",
+        codeVerifier: "verifier-bs1",
+      });
+      mockExchangeCodeForIdentity.mockResolvedValue({
+        provider: PROVIDER_ID,
+        subject: "sub-bs1",
+        email: "bs1@example.com",
+        emailVerified: true,
+        username: "bs1",
+        displayName: "BS1",
+        claims: {},
+      });
+      mockProvisionSsoUser.mockResolvedValue({
+        user: { id: "user-bs1", username: "bs1" },
+        tokens: { accessToken: "at-bs1", refreshToken: "rt-bs1" },
+      });
+
+      const startRes = await app.request(
+        `/sso/${PROVIDER_ID}/start?redirect=/\\evil.com`
+      );
+      expect(startRes.status).toBe(302);
+
+      const setCookieHeader = startRes.headers.get("Set-Cookie") ?? "";
+      const cookieMatch = setCookieHeader.match(new RegExp(`${SSO_STATE_COOKIE}=([^;]+)`));
+      expect(cookieMatch).not.toBeNull();
+      const stateCookieValue = cookieMatch![1];
+
+      const callbackRes = await app.request(`/sso/${PROVIDER_ID}/callback`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
+        },
+        body: JSON.stringify({ code: "code-bs1", state: "state-bs1" }),
+      });
+
+      expect(callbackRes.status).toBe(200);
+      const callbackBody = await callbackRes.json();
+      expect(callbackBody.data.redirect).toBe("/");
+    });
+
+    it("sanitizes open-redirect: ?redirect=/\\\\/evil.com (double-backslash) becomes /", async () => {
+      mockGetSsoConfig.mockReturnValue(makeEnabledConfig());
+      mockBuildAuthorizationRedirect.mockResolvedValue({
+        url: "https://idp.example.com/authorize?state=state-bs2",
+        state: "state-bs2",
+        nonce: "nonce-bs2",
+        codeVerifier: "verifier-bs2",
+      });
+      mockExchangeCodeForIdentity.mockResolvedValue({
+        provider: PROVIDER_ID,
+        subject: "sub-bs2",
+        email: "bs2@example.com",
+        emailVerified: true,
+        username: "bs2",
+        displayName: "BS2",
+        claims: {},
+      });
+      mockProvisionSsoUser.mockResolvedValue({
+        user: { id: "user-bs2", username: "bs2" },
+        tokens: { accessToken: "at-bs2", refreshToken: "rt-bs2" },
+      });
+
+      const startRes = await app.request(
+        `/sso/${PROVIDER_ID}/start?redirect=/\\/evil.com`
+      );
+      expect(startRes.status).toBe(302);
+
+      const setCookieHeader = startRes.headers.get("Set-Cookie") ?? "";
+      const cookieMatch = setCookieHeader.match(new RegExp(`${SSO_STATE_COOKIE}=([^;]+)`));
+      expect(cookieMatch).not.toBeNull();
+      const stateCookieValue = cookieMatch![1];
+
+      const callbackRes = await app.request(`/sso/${PROVIDER_ID}/callback`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
+        },
+        body: JSON.stringify({ code: "code-bs2", state: "state-bs2" }),
+      });
+
+      expect(callbackRes.status).toBe(200);
+      const callbackBody = await callbackRes.json();
+      expect(callbackBody.data.redirect).toBe("/");
+    });
+
+    it("sanitizes open-redirect: ?redirect=//evil.com (double-slash) becomes /", async () => {
+      mockGetSsoConfig.mockReturnValue(makeEnabledConfig());
+      mockBuildAuthorizationRedirect.mockResolvedValue({
+        url: "https://idp.example.com/authorize?state=state-ds1",
+        state: "state-ds1",
+        nonce: "nonce-ds1",
+        codeVerifier: "verifier-ds1",
+      });
+      mockExchangeCodeForIdentity.mockResolvedValue({
+        provider: PROVIDER_ID,
+        subject: "sub-ds1",
+        email: "ds1@example.com",
+        emailVerified: true,
+        username: "ds1",
+        displayName: "DS1",
+        claims: {},
+      });
+      mockProvisionSsoUser.mockResolvedValue({
+        user: { id: "user-ds1", username: "ds1" },
+        tokens: { accessToken: "at-ds1", refreshToken: "rt-ds1" },
+      });
+
+      const startRes = await app.request(
+        `/sso/${PROVIDER_ID}/start?redirect=//evil.com`
+      );
+      expect(startRes.status).toBe(302);
+
+      const setCookieHeader = startRes.headers.get("Set-Cookie") ?? "";
+      const cookieMatch = setCookieHeader.match(new RegExp(`${SSO_STATE_COOKIE}=([^;]+)`));
+      expect(cookieMatch).not.toBeNull();
+      const stateCookieValue = cookieMatch![1];
+
+      const callbackRes = await app.request(`/sso/${PROVIDER_ID}/callback`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
+        },
+        body: JSON.stringify({ code: "code-ds1", state: "state-ds1" }),
+      });
+
+      expect(callbackRes.status).toBe(200);
+      const callbackBody = await callbackRes.json();
+      expect(callbackBody.data.redirect).toBe("/");
+    });
+
+    it("sanitizes open-redirect: ?redirect=\\\\evil.com (bare backslash, no leading slash) becomes /", async () => {
+      mockGetSsoConfig.mockReturnValue(makeEnabledConfig());
+      mockBuildAuthorizationRedirect.mockResolvedValue({
+        url: "https://idp.example.com/authorize?state=state-nsl",
+        state: "state-nsl",
+        nonce: "nonce-nsl",
+        codeVerifier: "verifier-nsl",
+      });
+      mockExchangeCodeForIdentity.mockResolvedValue({
+        provider: PROVIDER_ID,
+        subject: "sub-nsl",
+        email: "nsl@example.com",
+        emailVerified: true,
+        username: "nsl",
+        displayName: "NSL",
+        claims: {},
+      });
+      mockProvisionSsoUser.mockResolvedValue({
+        user: { id: "user-nsl", username: "nsl" },
+        tokens: { accessToken: "at-nsl", refreshToken: "rt-nsl" },
+      });
+
+      const startRes = await app.request(
+        `/sso/${PROVIDER_ID}/start?redirect=\\evil.com`
+      );
+      expect(startRes.status).toBe(302);
+
+      const setCookieHeader = startRes.headers.get("Set-Cookie") ?? "";
+      const cookieMatch = setCookieHeader.match(new RegExp(`${SSO_STATE_COOKIE}=([^;]+)`));
+      expect(cookieMatch).not.toBeNull();
+      const stateCookieValue = cookieMatch![1];
+
+      const callbackRes = await app.request(`/sso/${PROVIDER_ID}/callback`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
+        },
+        body: JSON.stringify({ code: "code-nsl", state: "state-nsl" }),
+      });
+
+      expect(callbackRes.status).toBe(200);
+      const callbackBody = await callbackRes.json();
+      expect(callbackBody.data.redirect).toBe("/");
+    });
+
     it("sanitizes open-redirect: ?redirect=https://evil.com becomes /", async () => {
       mockGetSsoConfig.mockReturnValue(makeEnabledConfig());
 
@@ -546,6 +730,64 @@ describe("SSO Routes", () => {
       });
 
       expect(res.status).toBe(400);
+    });
+
+    it("cross-provider replay: cookie minted for provider A rejected by provider B's callback", async () => {
+      // Provider A is PROVIDER_ID ("testidp"), provider B is "otheridp"
+      const OTHER_PROVIDER_ID = "otheridp";
+      const configWithTwo: SsoConfig = {
+        enabled: true,
+        baseUrl: "http://localhost:5173",
+        defaultRole: "viewer",
+        autoLinkByEmail: true,
+        providers: new Map([
+          [
+            PROVIDER_ID,
+            {
+              id: PROVIDER_ID,
+              displayName: "Test IDP",
+              type: "oidc",
+              issuer: "https://idp.example.com",
+              clientId: "client-id",
+              clientSecret: "client-secret",
+              scopes: "openid email profile",
+            },
+          ],
+          [
+            OTHER_PROVIDER_ID,
+            {
+              id: OTHER_PROVIDER_ID,
+              displayName: "Other IDP",
+              type: "oidc",
+              issuer: "https://other-idp.example.com",
+              clientId: "other-client-id",
+              clientSecret: "other-client-secret",
+              scopes: "openid email profile",
+            },
+          ],
+        ]),
+      };
+      mockGetSsoConfig.mockReturnValue(configWithTwo);
+
+      // Mint a state cookie for provider A
+      const stateCookieValue = await buildStateCookie({
+        provider: PROVIDER_ID,
+        state: "state-replay",
+      });
+
+      // POST to provider B's callback with provider A's cookie — must be rejected
+      const res = await app.request(`/sso/${OTHER_PROVIDER_ID}/callback`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
+        },
+        body: JSON.stringify({ code: "code-replay", state: "state-replay" }),
+      });
+
+      expect(res.status).toBe(401);
+      // Exchange must NOT have been called
+      expect(mockExchangeCodeForIdentity).not.toHaveBeenCalled();
     });
   });
 });
