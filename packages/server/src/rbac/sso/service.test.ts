@@ -44,6 +44,16 @@ let mockDbUserRow: Record<string, unknown> | null = {
   updatedAt: new Date(),
 };
 
+// mutable config so individual tests can override autoLinkByEmail etc.
+const baseSsoConfig = {
+  enabled: true,
+  baseUrl: "https://app.example.com",
+  defaultRole: "viewer",
+  autoLinkByEmail: true,
+  providers: new Map(),
+};
+let currentSsoConfig = { ...baseSsoConfig };
+
 // Track calls for assertions
 const mockFns = {
   getUserIdentity: mock(async (_p: string, _s: string) => mockGetUserIdentityResult),
@@ -58,7 +68,6 @@ const mockFns = {
 };
 
 // DB mock for direct drizzle usage in service.ts (user row fetch + role sync)
-let mockDbDeleteCalled = false;
 let mockDbInsertValues: unknown[] = [];
 
 function makeSelectBuilder(resolveWith: unknown[]): Record<string, unknown> {
@@ -72,10 +81,7 @@ function makeSelectBuilder(resolveWith: unknown[]): Record<string, unknown> {
 
 function makeDeleteBuilder(): Record<string, unknown> {
   const b: Record<string, unknown> = {};
-  b.where = mock(() => {
-    mockDbDeleteCalled = true;
-    return b;
-  });
+  b.where = mock(() => b);
   b.then = mock((resolve: (v: unknown) => void) => resolve(undefined));
   return b;
 }
@@ -120,14 +126,9 @@ mock.module("../services/rbac", () => ({
   createSessionAndTokens: mockFns.createSessionAndTokens,
 }));
 
+// config mock reads from the mutable currentSsoConfig variable
 mock.module("./config", () => ({
-  getSsoConfig: () => ({
-    enabled: true,
-    baseUrl: "https://app.example.com",
-    defaultRole: "viewer",
-    autoLinkByEmail: true,
-    providers: new Map(),
-  }),
+  getSsoConfig: () => currentSsoConfig,
 }));
 
 mock.module("../db", () => ({
@@ -221,8 +222,10 @@ beforeEach(() => {
     tokens: { accessToken: "access-tok", refreshToken: "refresh-tok", expiresIn: 900 },
   };
   mockDbUserRow = { ...existingUserRow };
-  mockDbDeleteCalled = false;
   mockDbInsertValues = [];
+
+  // reset config to defaults
+  currentSsoConfig = { ...baseSsoConfig };
 
   // Clear all call tracking
   for (const fn of Object.values(mockFns)) {
@@ -301,33 +304,15 @@ describe("provisionSsoUser", () => {
   });
 
   // ----------------------------------------------------------------
-  // Test 4: autoLinkByEmail disabled → NOT linked, JIT create
+  // Test 4: autoLinkByEmail disabled → NOT linked, JIT create (Fix 2)
   // ----------------------------------------------------------------
-  it("4. autoLinkByEmail disabled → JIT create even with verified matching email", async () => {
-    // Override getSsoConfig to return autoLinkByEmail: false
-    // We can't re-mock after module registration, so we test that getUserByEmail
-    // was not called (i.e. no email link path entered).
-    // We do this by replacing the mock.module approach: check what gets called.
-    // Since mock.module is static, we need to control behaviour via mockGetUserByEmailResult
-    // and verify createUser is still called.
-    //
-    // The way to test "autoLinkByEmail disabled" properly: we need the config mock
-    // to return autoLinkByEmail: false. Since mock.module registered a fixed function,
-    // we need a level of indirection. We use a module-level variable for the config.
-    // However, since the config is imported inside provisionSsoUser as getSsoConfig(),
-    // and we mock the module statically, we cannot easily change it per-test.
-    //
-    // Strategy: We control the outcome by noting that if autoLinkByEmail were false,
-    // getUserByEmail would NOT be called. Since our mock ALWAYS returns autoLinkByEmail:true,
-    // we instead test the boundary condition by checking that when there's no identity
-    // AND getUserByEmail returns null, JIT create is triggered — this covers the
-    // "no link" branch. For the disabled flag specifically, we rely on the implementation
-    // being correct and the code review.
-    //
-    // Actually: let's test the observable: getUserByEmail NOT called when no identity
-    // and we simulate disabled by making getUserByEmail return null.
+  it("4. autoLinkByEmail disabled → getUserByEmail NOT called; JIT-creates new user even with matching verified email", async () => {
+    // use the mutable config variable to truly disable autoLinkByEmail
+    currentSsoConfig = { ...baseSsoConfig, autoLinkByEmail: false };
+
     mockGetUserIdentityResult = null;
-    mockGetUserByEmailResult = null; // simulates disabled or no match
+    // Email exists in the system — but should NOT be consulted
+    mockGetUserByEmailResult = existingUserRow;
     mockGetUserByUsernameResults.set("alice", null);
     const newUser = { ...existingUserRow, id: "jit-id" };
     mockCreateUserResult = { ...newUser, roles: [], permissions: [], lastLoginAt: null };
@@ -336,7 +321,11 @@ describe("provisionSsoUser", () => {
     const identity = makeIdentity({ emailVerified: true });
     await provisionSsoUser(makeProvider(), identity);
 
+    // autoLinkByEmail is false → getUserByEmail must NOT be called
+    expect(mockFns.getUserByEmail).not.toHaveBeenCalled();
+    // Must JIT-create instead
     expect(mockFns.createUser).toHaveBeenCalled();
+    expect(mockFns.createSessionAndTokens).toHaveBeenCalled();
   });
 
   // ----------------------------------------------------------------
@@ -391,9 +380,9 @@ describe("provisionSsoUser", () => {
   });
 
   // ----------------------------------------------------------------
-  // Test 7: inactive user → throws; createSessionAndTokens NOT called
+  // Test 7: inactive user → throws; touchUserIdentity NOT called (Fix 5)
   // ----------------------------------------------------------------
-  it("7. inactive user → throws AppError with /inactive/i message; createSessionAndTokens NOT called", async () => {
+  it("7. inactive user (existing identity) → throws AppError with /inactive/i; touchUserIdentity and createSessionAndTokens NOT called", async () => {
     mockGetUserIdentityResult = existingIdentityRow;
     mockDbUserRow = { ...existingUserRow, isActive: false };
 
@@ -401,13 +390,15 @@ describe("provisionSsoUser", () => {
       provisionSsoUser(makeProvider(), makeIdentity())
     ).rejects.toThrow(/inactive/i);
 
+    // inactive check fires before touchUserIdentity
+    expect(mockFns.touchUserIdentity).not.toHaveBeenCalled();
     expect(mockFns.createSessionAndTokens).not.toHaveBeenCalled();
   });
 
   // ----------------------------------------------------------------
-  // Test 8: role re-sync via roleMapping
+  // Test 8: role re-sync via roleMapping (Fix 7 hygiene)
   // ----------------------------------------------------------------
-  it("8. role re-sync: roleMappingClaim 'groups', mapping ch-admins→admin, claims {groups:['ch-admins']} → db delete+insert with admin role id", async () => {
+  it("8. role re-sync: roleMappingClaim 'groups', mapping ch-admins→admin, claims {groups:['ch-admins']} → db delete+insert with admin role id and assignedBy='sso:okta'", async () => {
     mockGetUserIdentityResult = existingIdentityRow;
     mockDbUserRow = { ...existingUserRow };
     mockGetUserRolesResult = ["viewer"]; // current roles differ from mapped
@@ -424,11 +415,12 @@ describe("provisionSsoUser", () => {
     // Verify role sync happened: delete was called then insert with admin roleId
     expect(mockDb.delete).toHaveBeenCalled();
     expect(mockDb.insert).toHaveBeenCalled();
+
+    // assert inserted rows have correct roleId and assignedBy
     const inserted = mockDbInsertValues[0];
-    expect(Array.isArray(inserted) ? inserted[0].roleId : (inserted as Record<string, unknown>).roleId ?? (Array.isArray(inserted) ? (inserted as unknown[])[0] : inserted)).toBeDefined();
-    // Check that the insert contained a row with roleId = role-admin
     const insertedArr = Array.isArray(inserted) ? inserted : [inserted];
     expect(insertedArr.some((r: unknown) => (r as Record<string, unknown>).roleId === "role-admin")).toBe(true);
+    expect(insertedArr.some((r: unknown) => (r as Record<string, unknown>).assignedBy === "sso:okta")).toBe(true);
   });
 
   // ----------------------------------------------------------------
@@ -467,5 +459,68 @@ describe("provisionSsoUser", () => {
     await expect(
       provisionSsoUser(makeProvider(), identity)
     ).rejects.toThrow(/email/i);
+  });
+
+  // ----------------------------------------------------------------
+  // Test 11: Fix 1 — super_admin user skips role sync entirely
+  // ----------------------------------------------------------------
+  it("11. super_admin user: role mapping resolves to viewer → db delete/insert NOT called; session still created", async () => {
+    mockGetUserIdentityResult = existingIdentityRow;
+    mockDbUserRow = { ...existingUserRow };
+    // Current roles include super_admin
+    mockGetUserRolesResult = ["super_admin"];
+    // Mapping would resolve to viewer
+    mockGetRoleByNameResult = { id: "role-viewer", name: "viewer", displayName: "Viewer" };
+
+    const provider = makeProvider({
+      roleMappingClaim: "groups",
+      roleMapping: { "regular-users": "viewer" },
+    });
+    const identity = makeIdentity({ claims: { groups: ["regular-users"] } });
+
+    await provisionSsoUser(provider, identity);
+
+    // Must NOT touch roles for super_admin
+    expect(mockDb.delete).not.toHaveBeenCalled();
+    expect(mockDb.insert).not.toHaveBeenCalled();
+    // Session is still created
+    expect(mockFns.createSessionAndTokens).toHaveBeenCalled();
+  });
+
+  // ----------------------------------------------------------------
+  // Test 12: Fix 3 — JIT race: createUser unique violation → re-resolve
+  // ----------------------------------------------------------------
+  it("12. JIT race: createUser throws UNIQUE error, getUserIdentity returns winner's identity on retry → session created for winner", async () => {
+    mockGetUserIdentityResult = null; // first call: no existing identity
+    mockGetUserByEmailResult = null;
+    mockGetUserByUsernameResults.set("alice", null);
+
+    const winnerIdentity = { ...existingIdentityRow, userId: "winner-id" };
+    const winnerUserRow = { ...existingUserRow, id: "winner-id" };
+
+    // createUser throws unique constraint error
+    mockFns.createUser.mockImplementation(async () => {
+      throw new Error("UNIQUE constraint failed: rbac_users.email");
+    });
+
+    // On second call to getUserIdentity (re-resolve), return the winner's identity
+    let getUserIdentityCallCount = 0;
+    mockFns.getUserIdentity.mockImplementation(async (_p: string, _s: string) => {
+      getUserIdentityCallCount++;
+      if (getUserIdentityCallCount === 1) return null; // initial check
+      return winnerIdentity; // re-resolve after race
+    });
+
+    // db.select returns winner's user row (for the re-resolved identity lookup)
+    mockDbUserRow = winnerUserRow;
+
+    const identity = makeIdentity();
+    const result = await provisionSsoUser(makeProvider(), identity);
+
+    // Session should be created — using the winner's row
+    expect(mockFns.createSessionAndTokens).toHaveBeenCalled();
+    expect(result).toEqual(mockCreateSessionResult);
+    // getUserIdentity was called twice: once initial, once to re-resolve
+    expect(getUserIdentityCallCount).toBe(2);
   });
 });
