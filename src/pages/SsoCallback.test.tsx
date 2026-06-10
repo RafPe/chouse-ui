@@ -2,9 +2,10 @@
  * Tests for SsoCallback page
  */
 
+import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 // --- mock the rbac store module ---
 const mockCompleteSsoLogin = vi.fn();
 
@@ -32,9 +33,6 @@ function renderAt(search: string) {
   let capturedLocation: { pathname: string; search: string } | null = null;
 
   const LocationCapture = () => {
-    // Rendered inside the router — we use a leaf route to capture the current
-    // location after any navigate() calls.
-    const { useLocation } = require("react-router-dom") as typeof import("react-router-dom");
     capturedLocation = useLocation();
     return null;
   };
@@ -45,7 +43,6 @@ function renderAt(search: string) {
         <Route path="/auth/sso/callback" element={<SsoCallback />} />
         <Route path="*" element={<LocationCapture />} />
       </Routes>
-      <LocationCapture />
     </MemoryRouter>,
   );
 
@@ -63,16 +60,18 @@ describe("SsoCallback", () => {
   it("happy path: calls completeSsoLogin and navigates to returned path", async () => {
     mockCompleteSsoLogin.mockResolvedValueOnce("/fleet");
 
-    renderAt("?provider=okta&code=c1&state=s1");
+    const { getLocation } = renderAt("?provider=okta&code=c1&state=s1");
 
     await waitFor(() => {
       expect(mockCompleteSsoLogin).toHaveBeenCalledWith("okta", "c1", "s1");
     });
 
-    // Loading spinner should be visible while in-flight (sync check passes because
-    // the mock resolves asynchronously). After resolution the route changes.
     await waitFor(() => {
       expect(mockCompleteSsoLogin).toHaveBeenCalledTimes(1);
+    });
+
+    await waitFor(() => {
+      expect(getLocation()?.pathname).toBe("/fleet");
     });
   });
 
@@ -122,6 +121,25 @@ describe("SsoCallback", () => {
       // After navigation the MemoryRouter is at '/' — the LocationCapture's
       // pathname should be '/'.
       expect(loc?.pathname).toBe("/");
+    });
+  });
+
+  it("StrictMode: completeSsoLogin is called exactly once despite double-invoke", async () => {
+    mockCompleteSsoLogin.mockResolvedValueOnce("/fleet");
+
+    render(
+      <React.StrictMode>
+        <MemoryRouter initialEntries={["/auth/sso/callback?provider=okta&code=c1&state=s1"]}>
+          <Routes>
+            <Route path="/auth/sso/callback" element={<SsoCallback />} />
+            <Route path="*" element={null} />
+          </Routes>
+        </MemoryRouter>
+      </React.StrictMode>,
+    );
+
+    await waitFor(() => {
+      expect(mockCompleteSsoLogin).toHaveBeenCalledTimes(1);
     });
   });
 });

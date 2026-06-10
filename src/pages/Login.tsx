@@ -133,7 +133,7 @@ export default function Login() {
                       onClick={() => {
                         window.location.href = ssoApi.startUrl(provider.id, redirectTo);
                       }}
-                      className="h-11 w-full rounded-xs border-ink-500 bg-ink-200 font-semibold tracking-tight text-paper hover:bg-ink-300"
+                      className="h-11 w-full rounded-xs border-ink-500 bg-ink-200 font-semibold tracking-tight text-paper hover:bg-ink-300 hover:text-paper"
                     >
                       Continue with {provider.displayName}
                     </Button>

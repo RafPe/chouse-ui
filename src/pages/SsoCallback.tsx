@@ -70,7 +70,7 @@ export default function SsoCallback(): React.JSX.Element {
             </Link>
           </>
         ) : (
-          <p className="inline-flex items-center gap-2 text-sm text-paper-muted">
+          <p role="status" className="inline-flex items-center gap-2 text-sm text-paper-muted">
             <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden />
             Completing sign-in…
           </p>

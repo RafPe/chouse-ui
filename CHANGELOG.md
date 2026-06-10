@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+
+- SSO login via configurable OIDC and OAuth2 providers (`auth.sso.*` config): authorization code + PKCE flow, JIT user provisioning with default role, auto-link by verified email, optional IdP claim→role mapping (never demotes super_admin), and SSO-enforced sign-in for linked non-admin accounts.
+
 ## [v2.17.4] - 2026-06-08
 
 ### Fixed
