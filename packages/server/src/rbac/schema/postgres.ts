@@ -150,7 +150,7 @@ export const userIdentities = pgTable('rbac_user_identities', {
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   provider: text('provider').notNull(),
   subject: text('subject').notNull(),
-  email: varchar('email', { length: 255 }),
+  email: text('email'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
 }, (table) => ({
