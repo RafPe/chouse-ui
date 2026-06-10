@@ -121,12 +121,12 @@ describe('ssoApi.startUrl', () => {
 // ---------------------------------------------------------------------------
 
 describe('ssoApi.completeCallback', () => {
-  it('POSTs code+state, stores tokens, and returns response data', async () => {
+  it('POSTs the raw callback query string as { params }, stores tokens, and returns response data', async () => {
+    let capturedBody: unknown = null;
+
     server.use(
       http.post('/api/rbac/auth/sso/callback', async ({ request }) => {
-        const body = await request.json() as { code: string; state: string };
-        expect(body.code).toBe('code1');
-        expect(body.state).toBe('state1');
+        capturedBody = await request.json();
         return HttpResponse.json({
           success: true,
           data: {
@@ -138,7 +138,11 @@ describe('ssoApi.completeCallback', () => {
       })
     );
 
-    const result = await ssoApi.completeCallback('code1', 'state1');
+    const result = await ssoApi.completeCallback('code=code1&state=state1');
+
+    // The ENTIRE query string is forwarded verbatim under a single key —
+    // the server re-parses it to rebuild the authorization response.
+    expect(capturedBody).toEqual({ params: 'code=code1&state=state1' });
 
     // Returns the data object
     expect(result.user).toEqual(MOCK_USER);
@@ -160,7 +164,7 @@ describe('ssoApi.completeCallback', () => {
       })
     );
 
-    await expect(ssoApi.completeCallback('bad-code', 'bad-state')).rejects.toMatchObject({
+    await expect(ssoApi.completeCallback('code=bad-code&state=bad-state')).rejects.toMatchObject({
       name: 'ApiError',
       message: 'Invalid SSO state',
       statusCode: 401,
@@ -183,7 +187,7 @@ describe('ssoApi.completeCallback', () => {
       })
     );
 
-    await ssoApi.completeCallback('c', 's');
+    await ssoApi.completeCallback('code=c&state=s');
 
     expect(capturedHeaders!.get('x-requested-with')).toBe('XMLHttpRequest');
   });

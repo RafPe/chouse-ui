@@ -275,7 +275,7 @@ describe("SSO Routes", () => {
           "Content-Type": "application/json",
           Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
         },
-        body: JSON.stringify({ code: "code-bs1", state: "state-bs1" }),
+        body: JSON.stringify({ params: "code=code-bs1&state=state-bs1" }),
       });
 
       expect(callbackRes.status).toBe(200);
@@ -321,7 +321,7 @@ describe("SSO Routes", () => {
           "Content-Type": "application/json",
           Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
         },
-        body: JSON.stringify({ code: "code-bs2", state: "state-bs2" }),
+        body: JSON.stringify({ params: "code=code-bs2&state=state-bs2" }),
       });
 
       expect(callbackRes.status).toBe(200);
@@ -367,7 +367,7 @@ describe("SSO Routes", () => {
           "Content-Type": "application/json",
           Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
         },
-        body: JSON.stringify({ code: "code-ds1", state: "state-ds1" }),
+        body: JSON.stringify({ params: "code=code-ds1&state=state-ds1" }),
       });
 
       expect(callbackRes.status).toBe(200);
@@ -413,7 +413,7 @@ describe("SSO Routes", () => {
           "Content-Type": "application/json",
           Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
         },
-        body: JSON.stringify({ code: "code-nsl", state: "state-nsl" }),
+        body: JSON.stringify({ params: "code=code-nsl&state=state-nsl" }),
       });
 
       expect(callbackRes.status).toBe(200);
@@ -469,7 +469,7 @@ describe("SSO Routes", () => {
           "Content-Type": "application/json",
           Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
         },
-        body: JSON.stringify({ code: "auth-code-xyz", state: "state1" }),
+        body: JSON.stringify({ params: "code=auth-code-xyz&state=state1" }),
       });
 
       expect(callbackRes.status).toBe(200);
@@ -514,7 +514,7 @@ describe("SSO Routes", () => {
           "Content-Type": "application/json",
           Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
         },
-        body: JSON.stringify({ code: "auth-code", state: "state2" }),
+        body: JSON.stringify({ params: "code=auth-code&state=state2" }),
       });
 
       expect(callbackRes.status).toBe(200);
@@ -568,7 +568,7 @@ describe("SSO Routes", () => {
           "Content-Type": "application/json",
           Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
         },
-        body: JSON.stringify({ code: "code-happy", state: "state-happy" }),
+        body: JSON.stringify({ params: "code=code-happy&state=state-happy" }),
       });
 
       expect(res.status).toBe(200);
@@ -611,7 +611,7 @@ describe("SSO Routes", () => {
           "Content-Type": "application/json",
           Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
         },
-        body: JSON.stringify({ code: "code-c", state: "state-clear-success" }),
+        body: JSON.stringify({ params: "code=code-c&state=state-clear-success" }),
       });
 
       expect(res.status).toBe(200);
@@ -620,7 +620,7 @@ describe("SSO Routes", () => {
       expect(setCookie).toMatch(/Max-Age=0|expires=Thu, 01 Jan 1970/i);
     });
 
-    it("returns 401 when state in body does not match cookie state", async () => {
+    it("returns 401 when state in params does not match cookie state", async () => {
       mockGetSsoConfig.mockReturnValue(makeEnabledConfig());
 
       const stateCookieValue = await buildStateCookie({ state: "state-real" });
@@ -631,7 +631,7 @@ describe("SSO Routes", () => {
           "Content-Type": "application/json",
           Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
         },
-        body: JSON.stringify({ code: "code-x", state: "state-tampered" }),
+        body: JSON.stringify({ params: "code=code-x&state=state-tampered" }),
       });
 
       expect(res.status).toBe(401);
@@ -654,7 +654,7 @@ describe("SSO Routes", () => {
           "Content-Type": "application/json",
           Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
         },
-        body: JSON.stringify({ code: "code-x", state: "wrong-state" }),
+        body: JSON.stringify({ params: "code=code-x&state=wrong-state" }),
       });
 
       expect(res.status).toBe(401);
@@ -668,7 +668,7 @@ describe("SSO Routes", () => {
       const res = await app.request(`/sso/callback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: "code-x", state: "some-state" }),
+        body: JSON.stringify({ params: "code=code-x&state=some-state" }),
       });
 
       expect(res.status).toBe(401);
@@ -691,7 +691,7 @@ describe("SSO Routes", () => {
           "Content-Type": "application/json",
           Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
         },
-        body: JSON.stringify({ code: "code-x", state: "some-state" }),
+        body: JSON.stringify({ params: "code=code-x&state=some-state" }),
       });
 
       expect(res.status).toBe(404);
@@ -727,7 +727,7 @@ describe("SSO Routes", () => {
           "Content-Type": "application/json",
           Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
         },
-        body: JSON.stringify({ code: "the-auth-code", state: "state-verify-url" }),
+        body: JSON.stringify({ params: "code=the-auth-code&state=state-verify-url" }),
       });
 
       expect(mockExchangeCodeForIdentity).toHaveBeenCalled();
@@ -751,13 +751,97 @@ describe("SSO Routes", () => {
       expect(checks.nonce).toBe("nonce-verify-url");
     });
 
+    it("preserves extra authorization-response params (iss) in the reconstructed URL", async () => {
+      mockGetSsoConfig.mockReturnValue(makeEnabledConfig());
+
+      const stateCookieValue = await buildStateCookie({ state: "state-iss" });
+      mockExchangeCodeForIdentity.mockResolvedValue({
+        provider: PROVIDER_ID,
+        subject: "sub-iss",
+        email: "iss@example.com",
+        emailVerified: true,
+        username: "issuser",
+        displayName: "Iss User",
+        claims: {},
+      });
+      mockProvisionSsoUser.mockResolvedValue({
+        user: { id: "user-iss", username: "issuser" },
+        tokens: { accessToken: "at-iss", refreshToken: "rt-iss" },
+      });
+
+      // Google appends iss because it advertises
+      // authorization_response_iss_parameter_supported — openid-client
+      // refuses the exchange if it goes missing.
+      const res = await app.request(`/sso/callback`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
+        },
+        body: JSON.stringify({
+          params:
+            "code=code-iss&state=state-iss&iss=https%3A%2F%2Faccounts.google.com&authuser=0",
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(mockExchangeCodeForIdentity).toHaveBeenCalled();
+      const callbackUrl: URL = mockExchangeCodeForIdentity.mock.calls[0][1];
+      expect(callbackUrl.searchParams.get("code")).toBe("code-iss");
+      expect(callbackUrl.searchParams.get("state")).toBe("state-iss");
+      expect(callbackUrl.searchParams.get("iss")).toBe("https://accounts.google.com");
+      expect(callbackUrl.searchParams.get("authuser")).toBe("0");
+    });
+
+    it("returns 401 when params lack a code", async () => {
+      mockGetSsoConfig.mockReturnValue(makeEnabledConfig());
+
+      const stateCookieValue = await buildStateCookie({ state: "state-no-code" });
+
+      const res = await app.request(`/sso/callback`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
+        },
+        body: JSON.stringify({ params: "state=state-no-code" }),
+      });
+
+      expect(res.status).toBe(401);
+      expect(mockExchangeCodeForIdentity).not.toHaveBeenCalled();
+      expect(mockCreateAuditLogWithContext).toHaveBeenCalledWith(
+        expect.anything(),
+        "auth.sso_login_failed",
+        undefined,
+        expect.objectContaining({ status: "failure" })
+      );
+    });
+
+    it("returns 401 when params lack a state", async () => {
+      mockGetSsoConfig.mockReturnValue(makeEnabledConfig());
+
+      const stateCookieValue = await buildStateCookie({ state: "state-no-state" });
+
+      const res = await app.request(`/sso/callback`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
+        },
+        body: JSON.stringify({ params: "code=code-only" }),
+      });
+
+      expect(res.status).toBe(401);
+      expect(mockExchangeCodeForIdentity).not.toHaveBeenCalled();
+    });
+
     it("returns 400 when body is missing required fields", async () => {
       mockGetSsoConfig.mockReturnValue(makeEnabledConfig());
 
       const res = await app.request(`/sso/callback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: "" }),
+        body: JSON.stringify({ params: "" }),
       });
 
       expect(res.status).toBe(400);
@@ -800,7 +884,7 @@ describe("SSO Routes", () => {
           "Content-Type": "application/json",
           Cookie: `${SSO_STATE_COOKIE}=${stateCookieValue}`,
         },
-        body: JSON.stringify({ code: "code-replay", state: "state-replay" }),
+        body: JSON.stringify({ params: "code=code-replay&state=state-replay" }),
       });
 
       // Provider lookup from the verified cookie fails → 404, no exchange

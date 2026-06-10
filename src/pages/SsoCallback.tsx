@@ -1,10 +1,11 @@
 /**
  * SSO Callback Page
  *
- * The IdP redirects here with ?code & ?state. The server identifies the
- * provider from its signed state cookie, so no provider param is needed.
- * Completes the login via the server callback endpoint, then forwards to
- * the original target.
+ * The IdP redirects here with ?code & ?state (plus extras like Google's
+ * ?iss). The server identifies the provider from its signed state cookie,
+ * so no provider param is needed. Completes the login by forwarding the
+ * raw query string to the server callback endpoint, then forwards to the
+ * original target.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -43,7 +44,9 @@ export default function SsoCallback(): React.JSX.Element {
       return;
     }
 
-    completeSsoLogin(code, state)
+    // Forward the ENTIRE query string — IdPs append more than code+state
+    // (e.g. Google's iss), and openid-client validates the full response.
+    completeSsoLogin(searchParams.toString())
       .then((redirect) => navigate(safeClientRedirect(redirect), { replace: true }))
       .catch((err: unknown) => {
         log.error("SSO callback failed:", err);

@@ -25,8 +25,11 @@ import { AppError } from "../../types";
 const ssoRoutes = new Hono();
 
 const CallbackSchema = z.object({
-  code: z.string().min(1, "Authorization code is required"),
-  state: z.string().min(1, "State is required"),
+  // Raw query string from the IdP redirect (code, state, iss, ...).
+  // Forwarded verbatim because openid-client validates the full
+  // authorization response, including the iss parameter when the
+  // IdP advertises authorization_response_iss_parameter_supported.
+  params: z.string().min(1).max(8192),
 });
 
 /** Only allow same-app relative redirect targets. */
@@ -119,9 +122,13 @@ ssoRoutes.get("/:provider/start", async (c) => {
  * cookie payload (signed, audience-bound), not from the URL or the body.
  */
 ssoRoutes.post("/callback", zValidator("json", CallbackSchema), async (c) => {
-  const { code, state } = c.req.valid("json");
+  const { params } = c.req.valid("json");
   const ipAddress = getClientIp(c);
   const config = getSsoConfig();
+
+  const query = new URLSearchParams(params);
+  const state = query.get("state");
+  const code = query.get("code");
 
   const stateCookie = getCookie(c, SSO_STATE_COOKIE);
   // One-time use: always clear, even on failure.
@@ -129,6 +136,11 @@ ssoRoutes.post("/callback", zValidator("json", CallbackSchema), async (c) => {
 
   let payload: SsoStatePayload | undefined;
   try {
+    if (!code || !state)
+      throw AppError.unauthorized(
+        "Sign-in response is incomplete. Please try again."
+      );
+
     if (!stateCookie)
       throw AppError.unauthorized("Sign-in session expired. Please try again.");
 
@@ -151,13 +163,15 @@ ssoRoutes.post("/callback", zValidator("json", CallbackSchema), async (c) => {
       throw AppError.unauthorized("Sign-in state mismatch. Please try again.");
     }
 
-    // openid-client parses code+state from this URL, but derives the
+    // openid-client validates the full authorization response from this URL
+    // (code, state, and iss when the IdP advertises
+    // authorization_response_iss_parameter_supported), but derives the
     // token-exchange redirect_uri by stripping the ENTIRE query string —
     // leaving exactly the bare callback URL /start registered with the IdP.
     // That stripParams behavior is why the redirect_uri carries no provider.
+    // The query is re-serialized through URLSearchParams, never interpolated.
     const callbackUrl = new URL(`${config.baseUrl}/auth/sso/callback`);
-    callbackUrl.searchParams.set("code", code);
-    callbackUrl.searchParams.set("state", state);
+    callbackUrl.search = query.toString();
 
     const identity = await exchangeCodeForIdentity(provider, callbackUrl, {
       codeVerifier: payload.codeVerifier,

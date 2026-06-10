@@ -57,13 +57,13 @@ beforeEach(() => {
 });
 
 describe("SsoCallback", () => {
-  it("happy path: calls completeSsoLogin and navigates to returned path", async () => {
+  it("happy path: calls completeSsoLogin with the full query string and navigates to returned path", async () => {
     mockCompleteSsoLogin.mockResolvedValueOnce("/fleet");
 
     const { getLocation } = renderAt("?code=c1&state=s1");
 
     await waitFor(() => {
-      expect(mockCompleteSsoLogin).toHaveBeenCalledWith("c1", "s1");
+      expect(mockCompleteSsoLogin).toHaveBeenCalledWith("code=c1&state=s1");
     });
 
     await waitFor(() => {
@@ -72,6 +72,18 @@ describe("SsoCallback", () => {
 
     await waitFor(() => {
       expect(getLocation()?.pathname).toBe("/fleet");
+    });
+  });
+
+  it("preserves extra IdP params (iss) in the forwarded query string", async () => {
+    mockCompleteSsoLogin.mockResolvedValueOnce("/");
+
+    renderAt("?code=c1&state=s1&iss=https%3A%2F%2Faccounts.google.com");
+
+    await waitFor(() => {
+      expect(mockCompleteSsoLogin).toHaveBeenCalledWith(
+        "code=c1&state=s1&iss=https%3A%2F%2Faccounts.google.com",
+      );
     });
   });
 

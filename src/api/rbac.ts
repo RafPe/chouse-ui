@@ -1680,18 +1680,21 @@ export const ssoApi = {
   },
 
   /**
-   * Complete the flow: exchange code+state for a local session.
+   * Complete the flow: forward the RAW query string the IdP appended to the
+   * callback redirect (code, state, iss, ...) so the server can rebuild the
+   * authorization response verbatim — openid-client validates parameters
+   * like iss, which would fail if we forwarded only code+state.
    * The server identifies the provider from its signed state cookie,
    * so no provider id is needed here.
    */
-  async completeCallback(code: string, state: string): Promise<SsoCallbackResponse> {
+  async completeCallback(params: string): Promise<SsoCallbackResponse> {
     const response = await fetch('/api/rbac/auth/sso/callback', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Requested-With': 'XMLHttpRequest',
       },
-      body: JSON.stringify({ code, state }),
+      body: JSON.stringify({ params }),
     });
     const data = await response.json();
     if (!response.ok) {
