@@ -250,5 +250,8 @@ async function syncMappedRoles(
 /** Returns true if the error is a unique-constraint violation (SQLite or PostgreSQL). */
 function isUniqueError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
+  // PostgreSQL: SQLSTATE 23505 = unique_violation (message text may vary).
+  if ((err as { code?: string }).code === '23505') return true;
+  // SQLite: bun:sqlite errors say "UNIQUE constraint failed: ...".
   return err.message.includes('UNIQUE') || err.message.includes('unique');
 }

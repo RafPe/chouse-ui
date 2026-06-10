@@ -210,7 +210,7 @@ app.use('/api/rbac/auth/sso/*/start', rateLimiter({
   standardHeaders: true,
   keyGenerator: (c: Context) => c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP') || 'unknown',
 }));
-app.use('/api/rbac/auth/sso/*/callback', rateLimiter({
+app.use('/api/rbac/auth/sso/callback', rateLimiter({
   windowMs: 15 * 60 * 1000,
   limit: 10,
   standardHeaders: true,

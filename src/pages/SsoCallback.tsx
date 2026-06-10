@@ -1,9 +1,10 @@
 /**
  * SSO Callback Page
  *
- * The IdP redirects here with ?provider & ?code & ?state (provider was baked
- * into the redirect_uri by the server's /start endpoint). Completes the login
- * via the server callback endpoint, then forwards to the original target.
+ * The IdP redirects here with ?code & ?state. The server identifies the
+ * provider from its signed state cookie, so no provider param is needed.
+ * Completes the login via the server callback endpoint, then forwards to
+ * the original target.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -35,15 +36,14 @@ export default function SsoCallback(): React.JSX.Element {
       return;
     }
 
-    const provider = searchParams.get("provider");
     const code = searchParams.get("code");
     const state = searchParams.get("state");
-    if (!provider || !code || !state) {
+    if (!code || !state) {
       setError("Missing sign-in parameters. Please start again from the login page.");
       return;
     }
 
-    completeSsoLogin(provider, code, state)
+    completeSsoLogin(code, state)
       .then((redirect) => navigate(safeClientRedirect(redirect), { replace: true }))
       .catch((err: unknown) => {
         log.error("SSO callback failed:", err);

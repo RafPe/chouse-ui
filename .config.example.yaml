@@ -72,6 +72,7 @@ jwt:
 # ============================================
 # SSO (OIDC / OAuth2) — optional
 # ============================================
+# Register this redirect URI at your IdP: <base_url>/auth/sso/callback
 # auth:
 #   sso:
 #     enabled: true
@@ -92,6 +93,10 @@ jwt:
 #         # role_mapping: "idp-group-a:admin,idp-group-b:developer"
 #       github:
 #         type: oauth2                          # plain OAuth2: explicit endpoints + userinfo
+#         # Caveat: GitHub's /user endpoint returns `email: null` for accounts
+#         # with a private email, even with the user:email scope, so JIT
+#         # provisioning may fail. Make an email public on GitHub, or use a
+#         # provider that exposes email in its userinfo response.
 #         display_name: "GitHub"
 #         authorization_endpoint: https://github.com/login/oauth/authorize
 #         token_endpoint: https://github.com/login/oauth/access_token

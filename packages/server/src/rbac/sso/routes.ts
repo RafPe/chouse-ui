@@ -65,9 +65,11 @@ ssoRoutes.get("/:provider/start", async (c) => {
   }
 
   const redirect = safeRedirect(c.req.query("redirect"));
-  // The provider id rides along in the redirect_uri so the SPA callback page
-  // knows which provider to post back to. Must match the IdP-registered URI.
-  const redirectUri = `${config.baseUrl}/auth/sso/callback?provider=${encodeURIComponent(provider.id)}`;
+  // Provider-less redirect_uri — must match the IdP-registered URI exactly.
+  // The provider id travels in the signed state cookie instead; a query string
+  // here would be stripped by openid-client when it derives the token-exchange
+  // redirect_uri, breaking exact-match validation at the IdP.
+  const redirectUri = `${config.baseUrl}/auth/sso/callback`;
 
   let auth;
   try {
@@ -107,103 +109,104 @@ ssoRoutes.get("/:provider/start", async (c) => {
 });
 
 /**
- * POST /rbac/auth/sso/:provider/callback — finish the flow, mint tokens.
+ * POST /rbac/auth/sso/callback — finish the flow, mint tokens.
+ *
+ * Provider-less by design: the provider id comes from the VERIFIED state
+ * cookie payload (signed, audience-bound), not from the URL or the body.
  */
-ssoRoutes.post(
-  "/:provider/callback",
-  zValidator("json", CallbackSchema),
-  async (c) => {
-    const providerId = c.req.param("provider");
-    const { code, state } = c.req.valid("json");
-    const ipAddress = getClientIp(c);
-    const config = getSsoConfig();
-    const provider = config.providers.get(providerId);
+ssoRoutes.post("/callback", zValidator("json", CallbackSchema), async (c) => {
+  const { code, state } = c.req.valid("json");
+  const ipAddress = getClientIp(c);
+  const config = getSsoConfig();
 
-    const stateCookie = getCookie(c, SSO_STATE_COOKIE);
-    // One-time use: always clear, even on failure.
-    deleteCookie(c, SSO_STATE_COOKIE, { path: "/" });
+  const stateCookie = getCookie(c, SSO_STATE_COOKIE);
+  // One-time use: always clear, even on failure.
+  deleteCookie(c, SSO_STATE_COOKIE, { path: "/" });
+
+  let payload: SsoStatePayload | undefined;
+  try {
+    if (!stateCookie)
+      throw AppError.unauthorized("Sign-in session expired. Please try again.");
 
     try {
-      if (!config.enabled || !provider)
-        throw AppError.notFound("Unknown SSO provider");
-      if (!stateCookie)
-        throw AppError.unauthorized(
-          "Sign-in session expired. Please try again."
-        );
-
-      let payload: SsoStatePayload;
-      try {
-        payload = await verifyStatePayload(stateCookie);
-      } catch {
-        throw AppError.unauthorized(
-          "Sign-in session is invalid. Please try again."
-        );
-      }
-
-      if (payload.provider !== providerId || payload.state !== state) {
-        throw AppError.unauthorized(
-          "Sign-in state mismatch. Please try again."
-        );
-      }
-
-      // Must reconstruct the exact redirect_uri used in /start (incl. ?provider=).
-      const callbackUrl = new URL(`${config.baseUrl}/auth/sso/callback`);
-      callbackUrl.searchParams.set("provider", providerId);
-      callbackUrl.searchParams.set("code", code);
-      callbackUrl.searchParams.set("state", state);
-
-      const identity = await exchangeCodeForIdentity(provider, callbackUrl, {
-        codeVerifier: payload.codeVerifier,
-        state: payload.state,
-        nonce: payload.nonce,
-      });
-
-      const result = await provisionSsoUser(
-        provider,
-        identity,
-        ipAddress,
-        c.req.header("User-Agent")
+      payload = await verifyStatePayload(stateCookie);
+    } catch {
+      throw AppError.unauthorized(
+        "Sign-in session is invalid. Please try again."
       );
-
-      await createAuditLogWithContext(c, AUDIT_ACTIONS.SSO_LOGIN, result.user.id, {
-        details: { provider: providerId },
-        ipAddress,
-        status: "success",
-      });
-
-      return c.json({
-        success: true,
-        data: {
-          user: result.user,
-          tokens: result.tokens,
-          redirect: payload.redirect,
-        },
-      });
-    } catch (error) {
-      await createAuditLogWithContext(
-        c,
-        AUDIT_ACTIONS.SSO_LOGIN_FAILED,
-        undefined,
-        {
-          details: { provider: providerId },
-          ipAddress,
-          status: "failure",
-          errorMessage:
-            error instanceof Error ? error.message : "SSO login failed",
-        }
-      );
-      if (error instanceof AppError) throw error;
-      requestLogger(c.get("requestId")).warn(
-        {
-          module: "SSO",
-          provider: providerId,
-          err: error instanceof Error ? error.message : String(error),
-        },
-        "SSO code exchange failed"
-      );
-      throw AppError.unauthorized("SSO sign-in failed. Please try again.");
     }
+
+    // The signed cookie is the provider authority.
+    const providerId = payload.provider;
+    const provider = config.enabled
+      ? config.providers.get(providerId)
+      : undefined;
+    if (!provider) throw AppError.notFound("Unknown SSO provider");
+
+    if (payload.state !== state) {
+      throw AppError.unauthorized("Sign-in state mismatch. Please try again.");
+    }
+
+    // openid-client parses code+state from this URL, but derives the
+    // token-exchange redirect_uri by stripping the ENTIRE query string —
+    // leaving exactly the bare callback URL /start registered with the IdP.
+    // That stripParams behavior is why the redirect_uri carries no provider.
+    const callbackUrl = new URL(`${config.baseUrl}/auth/sso/callback`);
+    callbackUrl.searchParams.set("code", code);
+    callbackUrl.searchParams.set("state", state);
+
+    const identity = await exchangeCodeForIdentity(provider, callbackUrl, {
+      codeVerifier: payload.codeVerifier,
+      state: payload.state,
+      nonce: payload.nonce,
+    });
+
+    const result = await provisionSsoUser(
+      provider,
+      identity,
+      ipAddress,
+      c.req.header("User-Agent")
+    );
+
+    await createAuditLogWithContext(c, AUDIT_ACTIONS.SSO_LOGIN, result.user.id, {
+      details: { provider: providerId },
+      ipAddress,
+      status: "success",
+    });
+
+    return c.json({
+      success: true,
+      data: {
+        user: result.user,
+        tokens: result.tokens,
+        redirect: payload.redirect,
+      },
+    });
+  } catch (error) {
+    await createAuditLogWithContext(
+      c,
+      AUDIT_ACTIONS.SSO_LOGIN_FAILED,
+      undefined,
+      {
+        details: { provider: payload?.provider ?? "unknown" },
+        ipAddress,
+        status: "failure",
+        errorMessage:
+          error instanceof Error ? error.message : "SSO login failed",
+      }
+    );
+    // Warn with provider context for ALL failures, AppError or not.
+    requestLogger(c.get("requestId")).warn(
+      {
+        module: "SSO",
+        provider: payload?.provider ?? "unknown",
+        err: error instanceof Error ? error.message : String(error),
+      },
+      "SSO callback failed"
+    );
+    if (error instanceof AppError) throw error;
+    throw AppError.unauthorized("SSO sign-in failed. Please try again.");
   }
-);
+});
 
 export default ssoRoutes;

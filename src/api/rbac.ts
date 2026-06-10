@@ -1679,9 +1679,13 @@ export const ssoApi = {
     return `/api/rbac/auth/sso/${encodeURIComponent(providerId)}/start?redirect=${encodeURIComponent(redirect)}`;
   },
 
-  /** Complete the flow: exchange code+state for a local session. */
-  async completeCallback(providerId: string, code: string, state: string): Promise<SsoCallbackResponse> {
-    const response = await fetch(`/api/rbac/auth/sso/${encodeURIComponent(providerId)}/callback`, {
+  /**
+   * Complete the flow: exchange code+state for a local session.
+   * The server identifies the provider from its signed state cookie,
+   * so no provider id is needed here.
+   */
+  async completeCallback(code: string, state: string): Promise<SsoCallbackResponse> {
+    const response = await fetch('/api/rbac/auth/sso/callback', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

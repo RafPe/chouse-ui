@@ -123,7 +123,7 @@ describe('ssoApi.startUrl', () => {
 describe('ssoApi.completeCallback', () => {
   it('POSTs code+state, stores tokens, and returns response data', async () => {
     server.use(
-      http.post('/api/rbac/auth/sso/okta/callback', async ({ request }) => {
+      http.post('/api/rbac/auth/sso/callback', async ({ request }) => {
         const body = await request.json() as { code: string; state: string };
         expect(body.code).toBe('code1');
         expect(body.state).toBe('state1');
@@ -138,7 +138,7 @@ describe('ssoApi.completeCallback', () => {
       })
     );
 
-    const result = await ssoApi.completeCallback('okta', 'code1', 'state1');
+    const result = await ssoApi.completeCallback('code1', 'state1');
 
     // Returns the data object
     expect(result.user).toEqual(MOCK_USER);
@@ -152,7 +152,7 @@ describe('ssoApi.completeCallback', () => {
 
   it('throws ApiError with the server message on 401', async () => {
     server.use(
-      http.post('/api/rbac/auth/sso/okta/callback', () => {
+      http.post('/api/rbac/auth/sso/callback', () => {
         return HttpResponse.json(
           { success: false, error: { message: 'Invalid SSO state', code: 'SSO_STATE_MISMATCH' } },
           { status: 401 }
@@ -160,7 +160,7 @@ describe('ssoApi.completeCallback', () => {
       })
     );
 
-    await expect(ssoApi.completeCallback('okta', 'bad-code', 'bad-state')).rejects.toMatchObject({
+    await expect(ssoApi.completeCallback('bad-code', 'bad-state')).rejects.toMatchObject({
       name: 'ApiError',
       message: 'Invalid SSO state',
       statusCode: 401,
@@ -174,7 +174,7 @@ describe('ssoApi.completeCallback', () => {
     let capturedHeaders: Headers | null = null;
 
     server.use(
-      http.post('/api/rbac/auth/sso/okta/callback', ({ request }) => {
+      http.post('/api/rbac/auth/sso/callback', ({ request }) => {
         capturedHeaders = request.headers;
         return HttpResponse.json({
           success: true,
@@ -183,7 +183,7 @@ describe('ssoApi.completeCallback', () => {
       })
     );
 
-    await ssoApi.completeCallback('okta', 'c', 's');
+    await ssoApi.completeCallback('c', 's');
 
     expect(capturedHeaders!.get('x-requested-with')).toBe('XMLHttpRequest');
   });

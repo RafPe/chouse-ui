@@ -88,7 +88,7 @@ describe('stores/rbac', () => {
         permissions: [],
       });
 
-      const redirect = await useRbacStore.getState().completeSsoLogin('okta', 'code1', 'state1');
+      const redirect = await useRbacStore.getState().completeSsoLogin('code1', 'state1');
 
       expect(redirect).toBe('/fleet');
       const s = useRbacStore.getState();
@@ -121,7 +121,7 @@ describe('stores/rbac', () => {
       });
 
       await expect(
-        useRbacStore.getState().completeSsoLogin('okta', 'bad', 's')
+        useRbacStore.getState().completeSsoLogin('bad', 's')
       ).rejects.toThrow();
 
       expect(useRbacStore.getState().isAuthenticated).toBe(false);

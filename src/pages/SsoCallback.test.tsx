@@ -60,10 +60,10 @@ describe("SsoCallback", () => {
   it("happy path: calls completeSsoLogin and navigates to returned path", async () => {
     mockCompleteSsoLogin.mockResolvedValueOnce("/fleet");
 
-    const { getLocation } = renderAt("?provider=okta&code=c1&state=s1");
+    const { getLocation } = renderAt("?code=c1&state=s1");
 
     await waitFor(() => {
-      expect(mockCompleteSsoLogin).toHaveBeenCalledWith("okta", "c1", "s1");
+      expect(mockCompleteSsoLogin).toHaveBeenCalledWith("c1", "s1");
     });
 
     await waitFor(() => {
@@ -76,7 +76,7 @@ describe("SsoCallback", () => {
   });
 
   it("IdP error: shows error_description and back-to-login link, does NOT call completeSsoLogin", async () => {
-    renderAt("?provider=okta&error=access_denied&error_description=Denied");
+    renderAt("?error=access_denied&error_description=Denied");
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Denied");
@@ -89,7 +89,7 @@ describe("SsoCallback", () => {
       new Error("Sign-in state mismatch. Please try again."),
     );
 
-    renderAt("?provider=okta&code=c1&state=s1");
+    renderAt("?code=c1&state=s1");
 
     expect(
       await screen.findByText("Sign-in state mismatch. Please try again."),
@@ -98,7 +98,7 @@ describe("SsoCallback", () => {
   });
 
   it("missing params: shows error when code or state is absent, does NOT call completeSsoLogin", async () => {
-    renderAt("?provider=okta");
+    renderAt("?code=c1");
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent?.toLowerCase()).toMatch(/missing sign-in parameters/);
@@ -109,7 +109,7 @@ describe("SsoCallback", () => {
   it("redirect guard: navigates to '/' when completeSsoLogin resolves an external URL", async () => {
     mockCompleteSsoLogin.mockResolvedValueOnce("https://evil.com");
 
-    const { getLocation } = renderAt("?provider=okta&code=c1&state=s1");
+    const { getLocation } = renderAt("?code=c1&state=s1");
 
     await waitFor(() => {
       expect(mockCompleteSsoLogin).toHaveBeenCalledTimes(1);
@@ -129,7 +129,7 @@ describe("SsoCallback", () => {
 
     render(
       <React.StrictMode>
-        <MemoryRouter initialEntries={["/auth/sso/callback?provider=okta&code=c1&state=s1"]}>
+        <MemoryRouter initialEntries={["/auth/sso/callback?code=c1&state=s1"]}>
           <Routes>
             <Route path="/auth/sso/callback" element={<SsoCallback />} />
             <Route path="*" element={null} />

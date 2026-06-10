@@ -36,7 +36,7 @@ export interface RbacState {
 
   // Actions
   login: (identifier: string, password: string) => Promise<void>;
-  completeSsoLogin: (providerId: string, code: string, state: string) => Promise<string>;
+  completeSsoLogin: (code: string, state: string) => Promise<string>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
   refreshUser: () => Promise<void>;
@@ -118,7 +118,7 @@ export const useRbacStore = create<RbacState>()(
        * Complete an SSO login from the callback page.
        * Returns the post-login redirect target supplied by the server.
        */
-      completeSsoLogin: async (providerId: string, code: string, state: string) => {
+      completeSsoLogin: async (code: string, state: string) => {
         set({ isLoading: true, error: null });
 
         try {
@@ -126,7 +126,7 @@ export const useRbacStore = create<RbacState>()(
           const { cleanupUserSession, broadcastUserChange } = await import('@/utils/sessionCleanup');
           await cleanupUserSession(currentUserId);
 
-          const response = await ssoApi.completeCallback(providerId, code, state);
+          const response = await ssoApi.completeCallback(code, state);
 
           broadcastUserChange(response.user.id);
 

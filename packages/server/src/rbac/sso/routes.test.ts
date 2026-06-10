@@ -1,7 +1,7 @@
 /**
  * SSO Routes Tests
  *
- * Tests for /rbac/auth/sso/providers, /:provider/start, /:provider/callback
+ * Tests for /rbac/auth/sso/providers, /:provider/start, /callback
  */
 
 import { describe, it, expect, mock, beforeEach, afterAll } from "bun:test";
@@ -178,6 +178,26 @@ describe("SSO Routes", () => {
       expect(res.headers.get("Location")).toContain("https://idp.example.com/authorize");
     });
 
+    it("passes a provider-less redirect_uri (no query string) to buildAuthorizationRedirect", async () => {
+      mockGetSsoConfig.mockReturnValue(makeEnabledConfig());
+      mockBuildAuthorizationRedirect.mockResolvedValue({
+        url: "https://idp.example.com/authorize?response_type=code&state=abc",
+        state: "abc",
+        nonce: "nonce-val",
+        codeVerifier: "verifier-val",
+      });
+
+      const res = await app.request(`/sso/${PROVIDER_ID}/start`);
+
+      expect(res.status).toBe(302);
+      expect(mockBuildAuthorizationRedirect).toHaveBeenCalledTimes(1);
+      const redirectUri: string = mockBuildAuthorizationRedirect.mock.calls[0][1];
+      // Must be the exact registered URI — openid-client strips query params
+      // when deriving the token-exchange redirect_uri, so any query here would
+      // break exact-match validation at the IdP.
+      expect(redirectUri).toBe("http://localhost:5173/auth/sso/callback");
+    });
+
     it("sets state cookie with correct attributes", async () => {
       mockGetSsoConfig.mockReturnValue(makeEnabledConfig());
       mockBuildAuthorizationRedirect.mockResolvedValue({
@@ -245,7 +265,7 @@ describe("SSO Routes", () => {
       expect(cookieMatch).not.toBeNull();
       const stateCookieValue = cookieMatch![1];
 
-      const callbackRes = await app.request(`/sso/${PROVIDER_ID}/callback`, {
+      const callbackRes = await app.request(`/sso/callback`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -291,7 +311,7 @@ describe("SSO Routes", () => {
       expect(cookieMatch).not.toBeNull();
       const stateCookieValue = cookieMatch![1];
 
-      const callbackRes = await app.request(`/sso/${PROVIDER_ID}/callback`, {
+      const callbackRes = await app.request(`/sso/callback`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -337,7 +357,7 @@ describe("SSO Routes", () => {
       expect(cookieMatch).not.toBeNull();
       const stateCookieValue = cookieMatch![1];
 
-      const callbackRes = await app.request(`/sso/${PROVIDER_ID}/callback`, {
+      const callbackRes = await app.request(`/sso/callback`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -383,7 +403,7 @@ describe("SSO Routes", () => {
       expect(cookieMatch).not.toBeNull();
       const stateCookieValue = cookieMatch![1];
 
-      const callbackRes = await app.request(`/sso/${PROVIDER_ID}/callback`, {
+      const callbackRes = await app.request(`/sso/callback`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -439,7 +459,7 @@ describe("SSO Routes", () => {
         tokens: { accessToken: "at", refreshToken: "rt" },
       });
 
-      const callbackRes = await app.request(`/sso/${PROVIDER_ID}/callback`, {
+      const callbackRes = await app.request(`/sso/callback`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -484,7 +504,7 @@ describe("SSO Routes", () => {
       const cookieMatch = setCookieHeader.match(new RegExp(`${SSO_STATE_COOKIE}=([^;]+)`));
       const stateCookieValue = cookieMatch![1];
 
-      const callbackRes = await app.request(`/sso/${PROVIDER_ID}/callback`, {
+      const callbackRes = await app.request(`/sso/callback`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -513,9 +533,9 @@ describe("SSO Routes", () => {
     });
   });
 
-  // ── POST /:provider/callback ────────────────────────────────────────────────
+  // ── POST /callback ──────────────────────────────────────────────────────────
 
-  describe("POST /sso/:provider/callback", () => {
+  describe("POST /sso/callback", () => {
     it("happy path: exchanges code, provisions user, returns user+tokens+redirect", async () => {
       mockGetSsoConfig.mockReturnValue(makeEnabledConfig());
 
@@ -537,7 +557,7 @@ describe("SSO Routes", () => {
         tokens: { accessToken: "access-tok", refreshToken: "refresh-tok" },
       });
 
-      const res = await app.request(`/sso/${PROVIDER_ID}/callback`, {
+      const res = await app.request(`/sso/callback`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -580,7 +600,7 @@ describe("SSO Routes", () => {
         tokens: { accessToken: "at-c", refreshToken: "rt-c" },
       });
 
-      const res = await app.request(`/sso/${PROVIDER_ID}/callback`, {
+      const res = await app.request(`/sso/callback`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -600,7 +620,7 @@ describe("SSO Routes", () => {
 
       const stateCookieValue = await buildStateCookie({ state: "state-real" });
 
-      const res = await app.request(`/sso/${PROVIDER_ID}/callback`, {
+      const res = await app.request(`/sso/callback`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -623,7 +643,7 @@ describe("SSO Routes", () => {
 
       const stateCookieValue = await buildStateCookie({ state: "state-mismatch" });
 
-      const res = await app.request(`/sso/${PROVIDER_ID}/callback`, {
+      const res = await app.request(`/sso/callback`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -640,7 +660,7 @@ describe("SSO Routes", () => {
     it("returns 401 when state cookie is missing", async () => {
       mockGetSsoConfig.mockReturnValue(makeEnabledConfig());
 
-      const res = await app.request(`/sso/${PROVIDER_ID}/callback`, {
+      const res = await app.request(`/sso/callback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code: "code-x", state: "some-state" }),
@@ -655,12 +675,12 @@ describe("SSO Routes", () => {
       );
     });
 
-    it("returns 404 for unknown provider", async () => {
+    it("returns 404 when the cookie's provider is not configured", async () => {
       mockGetSsoConfig.mockReturnValue(makeEnabledConfig());
 
       const stateCookieValue = await buildStateCookie({ provider: "unknown-provider" });
 
-      const res = await app.request("/sso/unknown-provider/callback", {
+      const res = await app.request("/sso/callback", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -670,9 +690,10 @@ describe("SSO Routes", () => {
       });
 
       expect(res.status).toBe(404);
+      expect(mockExchangeCodeForIdentity).not.toHaveBeenCalled();
     });
 
-    it("exchangeCodeForIdentity is called with URL containing provider+code+state", async () => {
+    it("exchangeCodeForIdentity is called with URL containing code+state and NO provider param", async () => {
       mockGetSsoConfig.mockReturnValue(makeEnabledConfig());
 
       const stateCookieValue = await buildStateCookie({
@@ -695,7 +716,7 @@ describe("SSO Routes", () => {
         tokens: { accessToken: "at-v", refreshToken: "rt-v" },
       });
 
-      await app.request(`/sso/${PROVIDER_ID}/callback`, {
+      await app.request(`/sso/callback`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -708,10 +729,15 @@ describe("SSO Routes", () => {
       const callArgs = mockExchangeCodeForIdentity.mock.calls[0];
       const callbackUrl: URL = callArgs[1];
 
-      // The URL passed to exchangeCodeForIdentity must contain all required params
-      expect(callbackUrl.searchParams.get("provider")).toBe(PROVIDER_ID);
+      // code+state are parsed from currentUrl by openid-client; the derived
+      // redirect_uri is this URL minus its query, so it must NOT carry a
+      // provider param — that would change the registered redirect_uri.
+      expect(callbackUrl.searchParams.get("provider")).toBeNull();
       expect(callbackUrl.searchParams.get("code")).toBe("the-auth-code");
       expect(callbackUrl.searchParams.get("state")).toBe("state-verify-url");
+      const strippedUrl = new URL(callbackUrl.href);
+      strippedUrl.search = "";
+      expect(strippedUrl.href).toBe("http://localhost:5173/auth/sso/callback");
 
       // The checks object must carry the values from the cookie payload
       const checks = callArgs[2];
@@ -723,7 +749,7 @@ describe("SSO Routes", () => {
     it("returns 400 when body is missing required fields", async () => {
       mockGetSsoConfig.mockReturnValue(makeEnabledConfig());
 
-      const res = await app.request(`/sso/${PROVIDER_ID}/callback`, {
+      const res = await app.request(`/sso/callback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code: "" }),
@@ -732,27 +758,15 @@ describe("SSO Routes", () => {
       expect(res.status).toBe(400);
     });
 
-    it("cross-provider replay: cookie minted for provider A rejected by provider B's callback", async () => {
-      // Provider A is PROVIDER_ID ("testidp"), provider B is "otheridp"
+    it("replay with stale provider: cookie minted for 'okta' rejected when config only has another provider", async () => {
+      // Config knows only "otheridp"; the (signed) cookie claims "okta".
       const OTHER_PROVIDER_ID = "otheridp";
-      const configWithTwo: SsoConfig = {
+      const configWithOther: SsoConfig = {
         enabled: true,
         baseUrl: "http://localhost:5173",
         defaultRole: "viewer",
         autoLinkByEmail: true,
         providers: new Map([
-          [
-            PROVIDER_ID,
-            {
-              id: PROVIDER_ID,
-              displayName: "Test IDP",
-              type: "oidc",
-              issuer: "https://idp.example.com",
-              clientId: "client-id",
-              clientSecret: "client-secret",
-              scopes: "openid email profile",
-            },
-          ],
           [
             OTHER_PROVIDER_ID,
             {
@@ -767,16 +781,15 @@ describe("SSO Routes", () => {
           ],
         ]),
       };
-      mockGetSsoConfig.mockReturnValue(configWithTwo);
+      mockGetSsoConfig.mockReturnValue(configWithOther);
 
-      // Mint a state cookie for provider A
+      // Mint a state cookie for a provider that is no longer configured
       const stateCookieValue = await buildStateCookie({
-        provider: PROVIDER_ID,
+        provider: "okta",
         state: "state-replay",
       });
 
-      // POST to provider B's callback with provider A's cookie — must be rejected
-      const res = await app.request(`/sso/${OTHER_PROVIDER_ID}/callback`, {
+      const res = await app.request(`/sso/callback`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -785,8 +798,8 @@ describe("SSO Routes", () => {
         body: JSON.stringify({ code: "code-replay", state: "state-replay" }),
       });
 
-      expect(res.status).toBe(401);
-      // Exchange must NOT have been called
+      // Provider lookup from the verified cookie fails → 404, no exchange
+      expect(res.status).toBe(404);
       expect(mockExchangeCodeForIdentity).not.toHaveBeenCalled();
     });
   });

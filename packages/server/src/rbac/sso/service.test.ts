@@ -523,4 +523,40 @@ describe("provisionSsoUser", () => {
     // getUserIdentity was called twice: once initial, once to re-resolve
     expect(getUserIdentityCallCount).toBe(2);
   });
+
+  // ----------------------------------------------------------------
+  // Test 13: Postgres unique violation detected via SQLSTATE 23505
+  // ----------------------------------------------------------------
+  it("13. JIT race: Postgres error code 23505 (message without 'unique') is treated as unique violation → re-resolve", async () => {
+    mockGetUserIdentityResult = null;
+    mockGetUserByEmailResult = null;
+    mockGetUserByUsernameResults.set("alice", null);
+
+    const winnerIdentity = { ...existingIdentityRow, userId: "winner-pg-id" };
+    const winnerUserRow = { ...existingUserRow, id: "winner-pg-id" };
+
+    // Postgres-style error: SQLSTATE on `code`, message need not mention "unique"
+    mockFns.createUser.mockImplementation(async () => {
+      const err = new Error(
+        'duplicate key value violates constraint "rbac_users_email_key"'
+      ) as Error & { code?: string };
+      err.code = "23505";
+      throw err;
+    });
+
+    let getUserIdentityCallCount = 0;
+    mockFns.getUserIdentity.mockImplementation(async (_p: string, _s: string) => {
+      getUserIdentityCallCount++;
+      if (getUserIdentityCallCount === 1) return null;
+      return winnerIdentity;
+    });
+
+    mockDbUserRow = winnerUserRow;
+
+    const result = await provisionSsoUser(makeProvider(), makeIdentity());
+
+    expect(mockFns.createSessionAndTokens).toHaveBeenCalled();
+    expect(result).toEqual(mockCreateSessionResult);
+    expect(getUserIdentityCallCount).toBe(2);
+  });
 });
