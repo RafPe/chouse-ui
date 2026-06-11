@@ -119,6 +119,27 @@ jobs:
           echo "Skipping commit, push, Docker build, and publish."
           echo "Fragments remain in changelogs/unreleased/ for the next real release."
 
+      - name: Write release summary
+        if: steps.code_check.outputs.has_changes == 'true'
+        run: |
+          VERSION="v${{ steps.release.outputs.version }}"
+          {
+            echo "## Release Preview: $VERSION"
+            echo ""
+            echo "> Review the version and release notes below, then **Approve** the \`docker-publish\` deployment to build and push Docker, or **Reject** to abort."
+            echo ""
+            echo "---"
+            echo ""
+            # Extract notes for this version from CHANGELOG.md
+            awk -v tag="[$VERSION]" '
+              /^## \[v/ {
+                if (found) exit
+                if (index($0, tag) > 0) { found=1; next }
+              }
+              found { print }
+            ' CHANGELOG.md
+          } >> $GITHUB_STEP_SUMMARY
+
   # ── Step 2: build and push Docker (gate for everything downstream) ─────────
   docker:
     name: Build & Push Docker
