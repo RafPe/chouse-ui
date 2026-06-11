@@ -40,6 +40,35 @@ jobs:
           fi
           echo "Found $count fragment(s)."
 
+      - name: Guard against manual edits to managed files
+        run: |
+          ERRORS=""
+
+          # CHANGELOG.md must have an empty ## [Unreleased] section
+          # (any content there means someone edited it manually)
+          UNRELEASED_CONTENT=$(awk '
+            /^## \[Unreleased\]/ { found=1; next }
+            found && /^## \[v/ { exit }
+            found && /[^[:space:]]/ { print }
+          ' CHANGELOG.md)
+          if [ -n "$UNRELEASED_CONTENT" ]; then
+            ERRORS="$ERRORS\n  - CHANGELOG.md has manual content under ## [Unreleased]. Use a fragment file instead."
+          fi
+
+          # All three package.json versions must be in sync
+          V1=$(node -p "require('./package.json').version")
+          V2=$(node -p "require('./packages/server/package.json').version")
+          V3=$(node -p "require('./docs/portfolio/package.json').version")
+          if [ "$V1" != "$V2" ] || [ "$V1" != "$V3" ]; then
+            ERRORS="$ERRORS\n  - package.json versions are out of sync: root=$V1 server=$V2 portfolio=$V3. Align them before releasing."
+          fi
+
+          if [ -n "$ERRORS" ]; then
+            echo -e "Release blocked due to manual changes:\n$ERRORS"
+            exit 1
+          fi
+          echo "Guards passed — managed files are clean."
+
       - name: Run release script
         id: release
         run: |
