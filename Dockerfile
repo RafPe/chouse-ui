@@ -1,5 +1,5 @@
 # Production Dockerfile for CHouse UI.
-# Uses Bun for both building and running
+# Uses Bun for both building and running.
 
 # ============================================
 # Build Stage
