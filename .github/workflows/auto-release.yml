@@ -80,7 +80,7 @@ jobs:
       - name: Check for code changes since last tag
         id: code_check
         run: |
-          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          LAST_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || echo "")
           if [ -z "$LAST_TAG" ]; then
             echo "No previous tag found — treating as first release."
             echo "has_changes=true" >> $GITHUB_OUTPUT
