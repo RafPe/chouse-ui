@@ -27,7 +27,7 @@
     <img src="https://img.shields.io/github/actions/workflow/status/daun-gatal/chouse-ui/github-pages.yml?label=GitHub%20Pages" alt="GitHub Pages" />
   </a>
   <a href="https://github.com/daun-gatal/chouse-ui/actions/workflows/release.yml">
-    <img src="https://img.shields.io/github/actions/workflow/status/daun-gatal/chouse-ui/release.yml?label=Release" alt="Release" />
+    <img src="https://img.shields.io/github/actions/workflow/status/daun-gatal/chouse-ui/auto-release.yml?label=Release" alt="Release" />
   </a>
 </p>
 
