@@ -1,0 +1,289 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version override (e.g. 2.20.0). Leave empty to auto-compute from fragments."
+        required: false
+        default: ""
+
+jobs:
+  # ── Step 1: assemble changelog + bump versions ────────────────────────────
+  assemble:
+    name: Assemble Changelog
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      has_code_changes: ${{ steps.code_check.outputs.has_changes }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Check fragments exist
+        run: |
+          count=$(find changelogs/unreleased -name "*.md" ! -name "README.md" | wc -l | tr -d ' ')
+          if [ "$count" = "0" ]; then
+            echo "No changelog fragments found. Nothing to release."
+            exit 1
+          fi
+          echo "Found $count fragment(s)."
+
+      - name: Run release script
+        id: release
+        run: |
+          bun run scripts/release.ts ${{ inputs.version }}
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Assembled version: $VERSION"
+
+      - name: Check for code changes since last tag
+        id: code_check
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            echo "No previous tag found — treating as first release."
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "Comparing against last tag: $LAST_TAG"
+          CODE=$(git diff --name-only "$LAST_TAG" HEAD \
+            | grep -E '^(src/|packages/server/src/)' || true)
+          if [ -n "$CODE" ]; then
+            echo "Code changes detected:"
+            echo "$CODE"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "No code changes since $LAST_TAG — Docker/tag/release will be skipped."
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit and push changelog
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add \
+            CHANGELOG.md \
+            package.json \
+            packages/server/package.json \
+            docs/portfolio/package.json \
+            changelogs/unreleased/
+          git commit -m "chore: release v${{ steps.release.outputs.version }}"
+          git push origin main
+
+  # ── Step 2: build and push Docker (gate for everything downstream) ─────────
+  docker:
+    name: Build & Push Docker
+    needs: assemble
+    if: needs.assemble.outputs.has_code_changes == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=v${{ needs.assemble.outputs.version }}
+            type=raw,value=${{ needs.assemble.outputs.version }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ needs.assemble.outputs.version }}
+            COMMIT_SHA=${{ github.sha }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+  # ── Step 3 (parallel, after Docker succeeds): publish tag + GitHub Release ─
+  publish:
+    name: Publish Tag & Release
+    needs: docker
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      discussions: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Create and push tag
+        env:
+          VERSION: v${{ needs.docker.outputs.version || needs.assemble.outputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="v${{ needs.assemble.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --tags origin "$VERSION" | grep -q "refs/tags/$VERSION"; then
+            echo "Tag $VERSION already exists — skipping."
+            exit 0
+          fi
+          git tag -a "$VERSION" -m "Release $VERSION"
+          git push origin "$VERSION"
+          echo "Tag $VERSION created."
+
+      - name: Extract release notes
+        env:
+          VERSION: v${{ needs.assemble.outputs.version }}
+        run: |
+          awk -v tag="[$VERSION]" '
+            /^## \[v/ {
+              if (found) exit
+              if (index($0, tag) > 0) { found=1; next }
+            }
+            found { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          echo "Release notes:"
+          cat RELEASE_NOTES.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.assemble.outputs.version }}
+          name: v${{ needs.assemble.outputs.version }}
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+
+      - name: Get repository and category IDs
+        id: get_ids
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO_OWNER="${{ github.repository_owner }}"
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          REPO_ID=$(gh api graphql \
+            -f query="{ repository(owner: \"$REPO_OWNER\", name: \"$REPO_NAME\") { id } }" \
+            -q '.data.repository.id')
+          CATEGORY_ID=$(gh api graphql \
+            -f query="{ repository(owner: \"$REPO_OWNER\", name: \"$REPO_NAME\") { discussionCategories(first: 10) { nodes { id name } } } }" \
+            -q '.data.repository.discussionCategories.nodes[] | select(.name == "Announcements") | .id')
+          echo "repository_id=$REPO_ID" >> $GITHUB_OUTPUT
+          echo "category_id=$CATEGORY_ID" >> $GITHUB_OUTPUT
+
+      - name: Create release announcement discussion
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          VERSION: v${{ needs.assemble.outputs.version }}
+          REPO_ID: ${{ steps.get_ids.outputs.repository_id }}
+          CATEGORY_ID: ${{ steps.get_ids.outputs.category_id }}
+        run: |
+          {
+            echo "# 🎉 CHouse UI $VERSION Released!"
+            echo ""
+            echo "We're excited to announce the release of **CHouse UI $VERSION**!"
+            echo ""
+            echo "## What's New"
+            echo ""
+            cat RELEASE_NOTES.md
+            echo ""
+            echo "## 📦 Installation"
+            echo ""
+            echo '```bash'
+            echo "docker pull ghcr.io/$REPO:$VERSION"
+            echo '```'
+            echo ""
+            echo "## 🔗 Resources"
+            echo ""
+            echo "- **Release Notes**: https://github.com/$REPO/releases/tag/$VERSION"
+            echo "- **Repository**: https://github.com/$REPO"
+          } > ANNOUNCEMENT.md
+          cat ANNOUNCEMENT.md | gh api graphql \
+            --field query="mutation(\$body: String!) { createDiscussion(input: { repositoryId: \"$REPO_ID\", categoryId: \"$CATEGORY_ID\", title: \"CHouse UI $VERSION Released!\", body: \$body }) { discussion { id url } } }" \
+            --field body=@-
+
+  # ── Step 3 (parallel, after Docker succeeds): deploy docs ─────────────────
+  deploy-docs:
+    name: Deploy Docs
+    needs: docker
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Sync changelog to portfolio
+        run: cp CHANGELOG.md docs/portfolio/public/CHANGELOG.md
+
+      - name: Install dependencies
+        working-directory: docs/portfolio
+        run: bun install
+
+      - name: Build portfolio
+        working-directory: docs/portfolio
+        env:
+          NODE_ENV: production
+          VITE_BASE_PATH: /
+        run: bun run build --mode production
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+        with:
+          enablement: true
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/portfolio/dist
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4

@@ -38,6 +38,27 @@ Closes #
 
 <!-- If applicable, add screenshots to demonstrate the changes -->
 
+## Changelog Fragment
+
+<!-- Skip this section for non-user-visible changes (refactors, docs, CI). -->
+<!-- For everything else, add a fragment file so the release is automatic. -->
+
+- [ ] Added `changelogs/unreleased/<pr-number>-<slug>.md`
+
+<details>
+<summary>Fragment format</summary>
+
+```
+type: minor
+
+### Added
+- **Feature name** — description
+```
+
+Use `major` for breaking changes, `minor` for new features, `patch` for bug fixes.
+See `changelogs/unreleased/README.md` for full details.
+</details>
+
 ## Checklist
 
 <!-- Check all that apply -->
@@ -45,7 +66,6 @@ Closes #
 - [ ] My code follows the project's code style guidelines
 - [ ] I have performed a self-review of my code
 - [ ] I have commented my code, particularly in hard-to-understand areas
-- [ ] I have updated the documentation accordingly (if applicable)
 - [ ] My changes generate no new warnings or errors
 - [ ] I have checked for breaking changes and documented them (if applicable)
 - [ ] I have tested the changes in the relevant environment (development/production)

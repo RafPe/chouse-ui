@@ -112,12 +112,37 @@ When creating a PR via `gh pr create`, always read `.github/pull_request_templat
 
 ## Versioning & Releases
 
-When adding a new version entry to `CHANGELOG.md` (e.g. `## [2.18.0] - 2026-06-08`), always bump the `version` field to match in all three:
-- `package.json` (root)
-- `packages/server/package.json`
-- `docs/portfolio/package.json`
+Releases are **fully automated** — never edit `CHANGELOG.md` directly and never manually bump version numbers.
 
-All three must stay in sync with the CHANGELOG version at all times.
+### For contributors (every user-visible change)
+
+Drop a fragment file in `changelogs/unreleased/`:
+
+```
+changelogs/unreleased/<pr-number>-<slug>.md
+```
+
+```md
+type: minor
+
+### Added
+- **Feature name** — description
+```
+
+- `type` is required: `major` (breaking), `minor` (new feature), `patch` (bug fix)
+- Use `### Added / Changed / Fixed / Removed` sections
+- See `changelogs/unreleased/README.md` for full details
+
+Skip the fragment only for non-user-visible changes (refactors, CI, docs-only).
+
+### How releases happen
+
+When a PR containing a fragment merges to `main`, `auto-release.yml` fires automatically:
+1. Assembles all fragments into a new version block in `CHANGELOG.md`
+2. Bumps `version` in all three `package.json` files (root, server, portfolio) in sync
+3. Commits and pushes — triggering the existing `release.yml` which creates the git tag, GitHub Release, and Docker image
+
+Manual override (emergency use only): `bun run release 2.20.0`
 
 ## When to Apply Each Rule
 
@@ -127,4 +152,4 @@ All three must stay in sync with the CHANGELOG version at all times.
 | Reviewing a PR or diff, or self-checking before marking a task done | **[.rules/CODE_REVIEWER.md](.rules/CODE_REVIEWER.md)** — review checklist, approval criteria, common issues |
 | After finishing a task — scan files you touched | **[.rules/DEAD_CODE.md](.rules/DEAD_CODE.md)** — remove unused imports, symbols, exports left behind |
 | Proactively scanning the codebase for cleanup | **[.rules/DEAD_CODE.md](.rules/DEAD_CODE.md)** — full scan process including dependency and barrel-export checks |
-| A change is user-visible (new feature, bug fix, removal) | Update `## [Unreleased]` in `CHANGELOG.md` using `Added / Changed / Fixed / Removed` categories |
+| A change is user-visible (new feature, bug fix, removal) | Drop a fragment in `changelogs/unreleased/<pr-number>-<slug>.md` — never edit `CHANGELOG.md` directly |
