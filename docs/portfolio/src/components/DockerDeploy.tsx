@@ -29,7 +29,24 @@ rbac:
 jwt:
   secret: "change-me-in-production"
   access_expiry: 4h
-  refresh_expiry: 7d`;
+  refresh_expiry: 7d
+
+# SSO / OIDC — optional. Off unless auth.sso.enabled is true.
+# Register <base_url>/auth/sso/callback as the redirect URI at your IdP.
+auth:
+  sso:
+    enabled: false
+    base_url: https://your-app-url
+    default_role: viewer
+    auto_link_by_email: true
+    providers:
+      okta:
+        type: oidc
+        display_name: "Okta"
+        issuer: https://corp.okta.com
+        client_id: "..."
+        client_secret: "..."
+        scopes: "openid profile email"`;
 
 const DOCKER_PROD = `version: '3.8'
 

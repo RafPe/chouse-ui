@@ -51,6 +51,7 @@ const GROUPS: FeatureGroup[] = [
       { icon: Lock, title: "Encrypted Credentials", desc: "AES-256-GCM with PBKDF2 key derivation" },
       { icon: Users, title: "JWT Authentication", desc: "Short-lived access tokens, long-lived refresh tokens" },
       { icon: FileText, title: "Audit Logging", desc: "Every user action and query history with user-agent/geo context" },
+      { icon: Users, title: "SSO / OIDC", desc: "Sign in with any OIDC or OAuth2 provider — JIT user provisioning, email-based account linking, and optional IdP group → role sync" },
     ],
   },
   {

@@ -34,6 +34,10 @@ const FAQS: FaqItem[] = [
     answer: "AES-256-GCM for ClickHouse passwords, Argon2id (via Bun.password) for user passwords, JWT (jose) with short access + long refresh tokens, CSP and security headers, request size + rate limits, and SQL parsing before every query reaches ClickHouse.",
   },
   {
+    question: "Does it support SSO / single sign-on?",
+    answer: "Yes. CHouse UI supports OIDC (discovery via issuer) and plain OAuth2 providers — Okta, Google, GitHub, Keycloak, and any compliant IdP. It uses the Authorization Code flow with PKCE; the client secret stays on the server. First login creates the user just-in-time with a configurable default role. If the IdP returns a verified email that matches an existing account, the two are linked. Optionally, you can map an IdP groups claim to app roles so role assignments stay in sync. SSO is off by default and has no effect unless auth.sso.enabled is true in your config.",
+  },
+  {
     question: "Can I connect multiple ClickHouse servers?",
     answer: "Yes. Multi-connection is first-class — switch between servers from the connection selector. Each connection's credentials are encrypted independently.",
   },
