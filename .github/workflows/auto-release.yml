@@ -166,7 +166,7 @@ jobs:
   # ── Step 3 (parallel, after Docker succeeds): publish tag + GitHub Release ─
   publish:
     name: Publish Tag & Release
-    needs: docker
+    needs: [docker, assemble]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -270,7 +270,7 @@ jobs:
   # ── Step 3 (parallel, after Docker succeeds): deploy docs ─────────────────
   deploy-docs:
     name: Deploy Docs
-    needs: docker
+    needs: [docker, assemble]
     runs-on: ubuntu-latest
     permissions:
       contents: read
