@@ -227,6 +227,29 @@ jobs:
           fi
           echo "✓ CHANGELOG.md not touched."
 
+      - name: Check package.json versions were not manually bumped
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.sha }}"
+
+          ERRORS=""
+          for PKG in package.json packages/server/package.json docs/portfolio/package.json; do
+            CHANGED=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -q "^${PKG}$" && echo "yes" || echo "no")
+            if [ "$CHANGED" = "yes" ]; then
+              BASE_VER=$(git show "$BASE_SHA:$PKG" | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version" 2>/dev/null || echo "")
+              HEAD_VER=$(node -p "require('./$PKG').version")
+              if [ "$BASE_VER" != "$HEAD_VER" ]; then
+                ERRORS="$ERRORS\n  - $PKG: version was manually changed ($BASE_VER → $HEAD_VER). Version bumps are handled automatically by the release workflow."
+              fi
+            fi
+          done
+
+          if [ -n "$ERRORS" ]; then
+            echo -e "package.json version check failed:\n$ERRORS"
+            exit 1
+          fi
+          echo "✓ No manual version bumps detected."
+
       - name: Validate fragment files
         run: |
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
