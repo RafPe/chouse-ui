@@ -9,11 +9,13 @@ import ConnectionManagement from "@/features/admin/components/ConnectionManageme
 import { DataAccessPolicies } from "@/features/admin/components/DataAccessPolicies";
 import ClickHouseUsersManagement from "@/features/admin/components/ClickHouseUsers";
 import AiModelsManagement from "@/features/admin/components/AiModels";
+import SsoSettings from "@/features/admin/components/SsoSettings";
 import { useRbacStore, RBAC_PERMISSIONS } from "@/stores";
 import { cn } from "@/lib/utils";
 import {
   Bot,
   InfoIcon,
+  KeyRound,
   ShieldCheck,
   Users,
   Shield,
@@ -37,7 +39,8 @@ type AdminTabKey =
   | "connections"
   | "clickhouse-users"
   | "audit"
-  | "ai-models";
+  | "ai-models"
+  | "sso";
 
 const ADMIN_TAB_CONFIG: Record<AdminTabKey, AdminTabConfig> = {
   users: {
@@ -74,6 +77,11 @@ const ADMIN_TAB_CONFIG: Record<AdminTabKey, AdminTabConfig> = {
     icon: Bot,
     label: "AI models",
     description: "Configure LLMs",
+  },
+  sso: {
+    icon: KeyRound,
+    label: "SSO",
+    description: "Single sign-on settings & providers",
   },
 };
 
@@ -148,6 +156,7 @@ export default function Admin() {
   const canViewConnections = hasPermission(RBAC_PERMISSIONS.CONNECTIONS_VIEW);
   const canViewClickHouseUsers = hasPermission(RBAC_PERMISSIONS.CH_USERS_VIEW);
   const canViewAiModels = hasPermission(RBAC_PERMISSIONS.AI_MODELS_VIEW);
+  const canViewSso = hasPermission(RBAC_PERMISSIONS.SSO_VIEW);
 
   const { tab } = useParams<{ tab: string }>();
   const navigate = useNavigate();
@@ -159,6 +168,7 @@ export default function Admin() {
     ...(canViewConnections ? (["connections"] as AdminTabKey[]) : []),
     ...(canViewClickHouseUsers ? (["clickhouse-users"] as AdminTabKey[]) : []),
     ...(canViewAiModels ? (["ai-models"] as AdminTabKey[]) : []),
+    ...(canViewSso ? (["sso"] as AdminTabKey[]) : []),
     ...(canViewAudit ? (["audit"] as AdminTabKey[]) : []),
   ];
 
@@ -274,6 +284,14 @@ export default function Admin() {
             <TabsContent value="ai-models" className="mt-0 h-full outline-none">
               <div className="rounded-md border border-ink-500 bg-ink-100">
                 <AiModelsManagement />
+              </div>
+            </TabsContent>
+          )}
+
+          {activeTab === "sso" && canViewSso && (
+            <TabsContent value="sso" className="mt-0 h-full outline-none">
+              <div className="rounded-md border border-ink-500 bg-ink-100">
+                <SsoSettings />
               </div>
             </TabsContent>
           )}
