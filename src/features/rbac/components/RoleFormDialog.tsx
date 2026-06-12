@@ -314,13 +314,14 @@ export const RoleFormDialog: React.FC<RoleFormDialogProps> = ({
     const dataAccessPolicyIds = Array.from(selectedPolicyIds);
 
     if (isEditing && role) {
-      // Update role — only send policies for non-system roles (system roles are exempt).
+      // Update role — always persist the selected policies (system roles can carry
+      // policies too; the >=1 requirement is only enforced for non-system roles).
       const input: UpdateRoleInput = {
         displayName: displayName.trim(),
         description: description.trim() || null,
         permissionIds,
         isDefault,
-        ...(requiresPolicy ? { dataAccessPolicyIds } : {}),
+        dataAccessPolicyIds,
       };
       updateMutation.mutate({ id: role.id, input });
     } else {
