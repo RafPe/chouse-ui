@@ -2821,98 +2821,87 @@ export const MIGRATIONS: Migration[] = [
         }
       }
 
-      // ---- 3) Migrate legacy rules into policies (idempotent guard) ----
+      // ---- 3) Snapshot each user's EFFECTIVE legacy access into per-connection policies ----
+      // Idempotency guard: if policies already exist, assume this already ran.
       const alreadyMigrated = await all(sql`SELECT id FROM rbac_data_access_policies LIMIT 1`);
       if (alreadyMigrated.length > 0) {
         logger.info({ module: 'RBAC', phase: 'migration' }, '[Migration 1.26.0] Policies already present; skipping data copy');
         return;
       }
 
+      // Legacy data access rules (db/table patterns, optionally connection-scoped),
+      // grouped by the role or user they belonged to.
       let legacyRules: Array<Record<string, unknown>> = [];
       try {
-        legacyRules = await all(sql`SELECT id, role_id, user_id, connection_id, database_pattern, table_pattern, is_allowed, priority, description FROM rbac_data_access_rules`);
+        legacyRules = await all(sql`SELECT role_id, user_id, connection_id, database_pattern, table_pattern, is_allowed, priority FROM rbac_data_access_rules`);
       } catch {
-        // Old table absent (shouldn't happen after 1.1.0) — nothing to migrate.
         legacyRules = [];
       }
-
-      const byRole = new Map<string, Array<Record<string, unknown>>>();
-      const byUser = new Map<string, Array<Record<string, unknown>>>();
+      const roleRules = new Map<string, Array<Record<string, unknown>>>();
+      const userRules = new Map<string, Array<Record<string, unknown>>>();
       for (const r of legacyRules) {
-        if (r.role_id) {
-          const k = String(r.role_id);
-          (byRole.get(k) ?? byRole.set(k, []).get(k)!).push(r);
-        } else if (r.user_id) {
-          const k = String(r.user_id);
-          (byUser.get(k) ?? byUser.set(k, []).get(k)!).push(r);
-        }
+        if (r.role_id) { const k = String(r.role_id); (roleRules.get(k) ?? roleRules.set(k, []).get(k)!).push(r); }
+        else if (r.user_id) { const k = String(r.user_id); (userRules.get(k) ?? userRules.set(k, []).get(k)!).push(r); }
       }
 
-      // Create one policy from a set of legacy rules; returns the new policy id.
-      // Each legacy rule's connection_id maps directly onto the new per-rule
-      // connection scope (null = all connections).
-      const createPolicyFromRules = async (
+      // Legacy per-user connection grants ("Manage Access"). These, together with
+      // connection-scoped rules, define the connections a user could reach.
+      const grantsByUser = new Map<string, Set<string>>();
+      try {
+        const grants = await all(sql`SELECT user_id, connection_id FROM rbac_user_connections WHERE can_use = ${b(true)}`);
+        for (const g of grants) {
+          const uid = String(g.user_id);
+          (grantsByUser.get(uid) ?? grantsByUser.set(uid, new Set()).get(uid)!).add(String(g.connection_id));
+        }
+      } catch {
+        /* table may be absent on some installs */
+      }
+
+      // Create a policy with the given (already per-connection) rules; returns its id.
+      const createPolicy = async (
         name: string,
-        rules: Array<Record<string, unknown>>,
-        isSystem: boolean
+        isSystem: boolean,
+        rules: Array<{ connId: string | null; db: string; table: string; allow: boolean; prio: number }>
       ): Promise<string> => {
         const policyId = randomUUID();
         await run(sql`INSERT INTO rbac_data_access_policies (id, name, description, is_system, created_at, updated_at, created_by)
-          VALUES (${policyId}, ${name}, ${'Migrated from legacy data access rules'}, ${b(isSystem)}, ${now()}, ${now()}, NULL)`);
-
+          VALUES (${policyId}, ${name}, ${'Migrated from legacy data access'}, ${b(isSystem)}, ${now()}, ${now()}, NULL)`);
         for (const r of rules) {
-          await run(sql`INSERT INTO rbac_data_access_policy_rules (id, policy_id, connection_id, database_pattern, table_pattern, is_allowed, priority, description, created_at, updated_at)
-            VALUES (${randomUUID()}, ${policyId}, ${r.connection_id ? String(r.connection_id) : null}, ${String(r.database_pattern ?? '*')}, ${String(r.table_pattern ?? '*')}, ${b(Boolean(r.is_allowed))}, ${Number(r.priority ?? 0)}, ${r.description != null ? String(r.description) : null}, ${now()}, ${now()})`);
+          await run(sql`INSERT INTO rbac_data_access_policy_rules (id, policy_id, connection_id, database_pattern, table_pattern, is_allowed, priority, created_at, updated_at)
+            VALUES (${randomUUID()}, ${policyId}, ${r.connId}, ${r.db}, ${r.table}, ${b(r.allow)}, ${r.prio}, ${now()}, ${now()})`);
         }
         return policyId;
       };
 
-      // 3a. Role-level rules -> policies attached to the role.
-      const migratedRolePolicy = new Map<string, string>();
-      for (const [roleId, rules] of byRole) {
-        const roleRows = await all(sql`SELECT name, display_name FROM rbac_roles WHERE id = ${roleId} LIMIT 1`);
-        if (roleRows.length === 0) continue;
-        const roleName = String(roleRows[0].name);
-        const displayName = String(roleRows[0].display_name ?? roleName);
-        const isGuest = roleName === SYSTEM_ROLES.GUEST;
-        const policyName = isGuest ? 'System Tables (Guest)' : `Migrated role: ${roleName}`;
-        const policyId = await createPolicyFromRules(policyName, rules, isGuest);
-        await run(sql`INSERT INTO rbac_role_data_access_policies (id, role_id, policy_id, created_at) VALUES (${randomUUID()}, ${roleId}, ${policyId}, ${now()})`);
-        migratedRolePolicy.set(roleId, policyId);
+      // Keep a guest system policy (read system tables) for NEW guest users. It is a
+      // global (null) rule — it does not by itself grant connection access.
+      const guestRows = await all(sql`SELECT id FROM rbac_roles WHERE name = ${SYSTEM_ROLES.GUEST} LIMIT 1`);
+      if (guestRows.length > 0) {
+        const gpid = await createPolicy('System Tables (Guest)', true, [{ connId: null, db: 'system', table: '*', allow: true, prio: 100 }]);
+        await run(sql`INSERT INTO rbac_role_data_access_policies (id, role_id, policy_id, created_at) VALUES (${randomUUID()}, ${String(guestRows[0].id)}, ${gpid}, ${now()})`);
       }
 
-      // 3b. User-level rules -> a per-user policy (attached to the user's collapsed role below).
-      const migratedUserPolicy = new Map<string, string>();
-      for (const [userId, rules] of byUser) {
-        const userRows = await all(sql`SELECT username FROM rbac_users WHERE id = ${userId} LIMIT 1`);
-        const username = userRows.length > 0 ? String(userRows[0].username) : userId;
-        const policyId = await createPolicyFromRules(`Migrated user: ${username}`, rules, false);
-        migratedUserPolicy.set(userId, policyId);
-      }
-
-      // ---- 3c) Collapse every user to a single role ----
-      const mergedRoleByHash = new Map<string, string>();
+      // Collapse each user to a single role carrying a snapshot of their effective access.
+      const mergedByHash = new Map<string, string>();
       let mergedCounter = 0;
       const users = await all(sql`SELECT id FROM rbac_users`);
 
       for (const u of users) {
         const userId = String(u.id);
-        const roleRows = await all(sql`SELECT role_id FROM rbac_user_roles WHERE user_id = ${userId}`);
-        const roleIds = roleRows.map((r) => String(r.role_id));
-        const userPolicyId = migratedUserPolicy.get(userId);
+        const roleRows = await all(sql`
+          SELECT r.id AS id, r.name AS name FROM rbac_user_roles ur
+          JOIN rbac_roles r ON r.id = ur.role_id WHERE ur.user_id = ${userId}
+        `);
+        const roleIds = roleRows.map((r) => String(r.id));
 
-        // Resolve which (if any) of the user's roles are the privileged system roles,
-        // whose access bypass keys off the role *name* — never dissolve those.
+        // Privileged roles bypass data access by name — never dissolve them.
         let privileged: string | null = null;
-        for (const rid of roleIds) {
-          const nameRows = await all(sql`SELECT name FROM rbac_roles WHERE id = ${rid} LIMIT 1`);
-          const rn = nameRows.length > 0 ? String(nameRows[0].name) : '';
-          if (rn === SYSTEM_ROLES.SUPER_ADMIN) { privileged = rid; break; }
-          if (rn === SYSTEM_ROLES.ADMIN && !privileged) { privileged = rid; }
+        for (const rr of roleRows) {
+          const rn = String(rr.name);
+          if (rn === SYSTEM_ROLES.SUPER_ADMIN) { privileged = String(rr.id); break; }
+          if (rn === SYSTEM_ROLES.ADMIN && !privileged) privileged = String(rr.id);
         }
-
         if (privileged) {
-          // Keep only the privileged role (preserves the admin/super_admin bypass).
           if (roleIds.length !== 1 || roleIds[0] !== privileged) {
             await run(sql`DELETE FROM rbac_user_roles WHERE user_id = ${userId}`);
             await run(sql`INSERT INTO rbac_user_roles (id, user_id, role_id, assigned_at) VALUES (${randomUUID()}, ${userId}, ${privileged}, ${now()})`);
@@ -2920,44 +2909,60 @@ export const MIGRATIONS: Migration[] = [
           continue;
         }
 
-        const needsMerge = roleIds.length > 1 || (roleIds.length >= 1 && Boolean(userPolicyId));
-        if (!needsMerge) {
-          // 0 roles, or exactly 1 role with no user-level rules -> nothing to collapse.
-          continue;
+        // Effective legacy data rules = the user's roles' rules + their user-level rules.
+        const dataRules: Array<Record<string, unknown>> = [];
+        for (const rid of roleIds) dataRules.push(...(roleRules.get(rid) ?? []));
+        dataRules.push(...(userRules.get(userId) ?? []));
+
+        // Connections the user could reach: direct grants + connection-scoped rule targets.
+        const reachable = new Set<string>(grantsByUser.get(userId) ?? []);
+        for (const r of dataRules) if (r.connection_id) reachable.add(String(r.connection_id));
+
+        // Build per-connection rules. A connection-scoped rule stays on its connection;
+        // a null rule is expanded onto every connection the user could reach (so it
+        // both grants those connections and applies its db/table scope there).
+        const effective: Array<{ connId: string | null; db: string; table: string; allow: boolean; prio: number }> = [];
+        const seen = new Set<string>();
+        const push = (connId: string, r: Record<string, unknown>) => {
+          const db = String(r.database_pattern ?? '*');
+          const table = String(r.table_pattern ?? '*');
+          const allow = Boolean(r.is_allowed);
+          const prio = Number(r.priority ?? 0);
+          const key = JSON.stringify([connId, db, table, allow, prio]);
+          if (!seen.has(key)) { seen.add(key); effective.push({ connId, db, table, allow, prio }); }
+        };
+        for (const r of dataRules) {
+          if (r.connection_id) push(String(r.connection_id), r);
+          else for (const c of reachable) push(c, r);
         }
 
-        // Union of permissions across the user's roles.
+        // Single role with no resulting access — leave the user untouched.
+        if (roleIds.length <= 1 && effective.length === 0) continue;
+
         const permSet = new Set<string>();
         for (const rid of roleIds) {
           const perms = await all(sql`SELECT permission_id FROM rbac_role_permissions WHERE role_id = ${rid}`);
           perms.forEach((p) => permSet.add(String(p.permission_id)));
         }
-        // Policies: each role's migrated policy (if any) + the user's own policy.
-        const policySet = new Set<string>();
-        for (const rid of roleIds) {
-          const pid = migratedRolePolicy.get(rid);
-          if (pid) policySet.add(pid);
-        }
-        if (userPolicyId) policySet.add(userPolicyId);
 
         const permList = Array.from(permSet).sort();
-        const policyList = Array.from(policySet).sort();
-        const hashKey = createHash('sha256').update(`${permList.join(',')}|${policyList.join(',')}`).digest('hex');
+        const ruleList = effective.map((e) => JSON.stringify([e.connId, e.db, e.table, e.allow, e.prio])).sort();
+        const hash = createHash('sha256').update(`${permList.join(',')}|${ruleList.join(',')}`).digest('hex');
 
-        let mergedRoleId = mergedRoleByHash.get(hashKey);
+        let mergedRoleId = mergedByHash.get(hash);
         if (!mergedRoleId) {
           mergedCounter += 1;
           mergedRoleId = randomUUID();
-          const roleName = `merged_role_${mergedCounter}`;
           await run(sql`INSERT INTO rbac_roles (id, name, display_name, description, is_system, is_default, priority, created_at, updated_at)
-            VALUES (${mergedRoleId}, ${roleName}, ${`Merged Role ${mergedCounter}`}, ${'Auto-generated during the one-role-per-user migration'}, ${b(false)}, ${b(false)}, ${50}, ${now()}, ${now()})`);
+            VALUES (${mergedRoleId}, ${`merged_role_${mergedCounter}`}, ${`Merged Role ${mergedCounter}`}, ${'Auto-generated during the data access migration'}, ${b(false)}, ${b(false)}, ${50}, ${now()}, ${now()})`);
           for (const pid of permList) {
             await run(sql`INSERT INTO rbac_role_permissions (id, role_id, permission_id, created_at) VALUES (${randomUUID()}, ${mergedRoleId}, ${pid}, ${now()})`);
           }
-          for (const pid of policyList) {
-            await run(sql`INSERT INTO rbac_role_data_access_policies (id, role_id, policy_id, created_at) VALUES (${randomUUID()}, ${mergedRoleId}, ${pid}, ${now()})`);
+          if (effective.length > 0) {
+            const polId = await createPolicy(`Migrated access ${mergedCounter}`, false, effective);
+            await run(sql`INSERT INTO rbac_role_data_access_policies (id, role_id, policy_id, created_at) VALUES (${randomUUID()}, ${mergedRoleId}, ${polId}, ${now()})`);
           }
-          mergedRoleByHash.set(hashKey, mergedRoleId);
+          mergedByHash.set(hash, mergedRoleId);
         }
 
         await run(sql`DELETE FROM rbac_user_roles WHERE user_id = ${userId}`);
@@ -2968,8 +2973,8 @@ export const MIGRATIONS: Migration[] = [
       await run(sql`CREATE UNIQUE INDEX IF NOT EXISTS user_roles_user_unique_idx ON rbac_user_roles(user_id)`);
 
       logger.info(
-        { module: 'RBAC', phase: 'migration', rolePolicies: migratedRolePolicy.size, userPolicies: migratedUserPolicy.size, mergedRoles: mergedCounter },
-        '[Migration 1.26.0] Migrated data access rules into policies and collapsed users to a single role'
+        { module: 'RBAC', phase: 'migration', mergedRoles: mergedCounter },
+        '[Migration 1.26.0] Snapshotted legacy access into per-connection policies and collapsed users to a single role'
       );
     },
   },

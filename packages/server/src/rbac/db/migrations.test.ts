@@ -136,10 +136,34 @@ async function assignRole(userId: string, rid: string): Promise<void> {
   await h.rawRun(sql`INSERT INTO rbac_user_roles (id, user_id, role_id, assigned_at) VALUES (${randomUUID()}, ${userId}, ${rid}, ${now()})`);
 }
 
-async function insertLegacyRule(opts: { roleId?: string; userId?: string; db: string; table: string; allowed?: boolean }): Promise<void> {
+async function insertLegacyRule(opts: { roleId?: string; userId?: string; connectionId?: string | null; db: string; table: string; allowed?: boolean }): Promise<void> {
   await h.rawRun(sql`INSERT INTO rbac_data_access_rules
     (id, role_id, user_id, connection_id, database_pattern, table_pattern, access_type, is_allowed, priority, created_at, updated_at)
-    VALUES (${randomUUID()}, ${opts.roleId ?? null}, ${opts.userId ?? null}, NULL, ${opts.db}, ${opts.table}, 'read', ${b(opts.allowed ?? true)}, 0, ${now()}, ${now()})`);
+    VALUES (${randomUUID()}, ${opts.roleId ?? null}, ${opts.userId ?? null}, ${opts.connectionId ?? null}, ${opts.db}, ${opts.table}, 'read', ${b(opts.allowed ?? true)}, 0, ${now()}, ${now()})`);
+}
+
+async function insertConnection(name: string): Promise<string> {
+  const id = randomUUID();
+  await h.rawRun(sql`INSERT INTO rbac_clickhouse_connections
+    (id, name, host, port, username, password_encrypted, database, is_default, is_active, ssl_enabled, created_at, updated_at)
+    VALUES (${id}, ${name}, 'localhost', 8123, 'default', 'x', 'default', ${b(false)}, ${b(true)}, ${b(false)}, ${now()}, ${now()})`);
+  return id;
+}
+
+async function insertGrant(userId: string, connectionId: string): Promise<void> {
+  await h.rawRun(sql`INSERT INTO rbac_user_connections (id, user_id, connection_id, can_use, created_at)
+    VALUES (${randomUUID()}, ${userId}, ${connectionId}, ${b(true)}, ${now()})`);
+}
+
+// The connection_ids set on a user's (single) role's policy rules.
+async function userRuleConnIds(userId: string): Promise<Set<string>> {
+  const rows = await h.rawAll(sql`
+    SELECT pr.connection_id AS connection_id FROM rbac_user_roles ur
+    JOIN rbac_role_data_access_policies rp ON rp.role_id = ur.role_id
+    JOIN rbac_data_access_policy_rules pr ON pr.policy_id = rp.policy_id
+    WHERE ur.user_id = ${userId}
+  `);
+  return new Set(rows.map((r) => String(r.connection_id)));
 }
 
 async function userRoleIds(userId: string): Promise<string[]> {
@@ -222,45 +246,57 @@ for (const dialect of DIALECTS) {
   });
 
   describe(`migrations · legacy data-access upgrade [${dialect}]`, () => {
-    let userMulti = "";
-    let userMultiTwin = "";
-    let userWithRule = "";
+    let connX = "";
+    let userGrant = "";
+    let userGrantTwin = "";
+    let userConnScoped = "";
     let userPlain = "";
+    let userNullNoGrant = "";
+    let userMulti = "";
     let userAdmin = "";
 
     beforeAll(async () => {
       await h.freshDatabase(dialect, pg);
-      // Run up to just before the policy migration; system roles exist (seeded by 1.2.2).
+      // Install at the last released version; system roles exist (seeded by 1.2.2).
       await runMigrations({ skipSeed: true, through: "1.25.0" });
 
       const analyst = await roleId("analyst");
       const viewer = await roleId("viewer");
-      const developer = await roleId("developer");
       const admin = await roleId("admin");
+      connX = await insertConnection("connX");
 
-      // A role-level rule on developer -> should become a role-attached policy.
-      await insertLegacyRule({ roleId: developer, db: "dev_db", table: "*" });
+      // Role-level global (null-connection) rule on analyst, like a real install.
+      await insertLegacyRule({ roleId: analyst, db: "analytics", table: "*" });
 
-      // Multi-role user (analyst + viewer), no user rules -> merged role.
+      // analyst + a direct connection grant -> null rule must be expanded onto connX.
+      userGrant = await insertUser("u_grant");
+      await assignRole(userGrant, analyst);
+      await insertGrant(userGrant, connX);
+
+      // Identical to u_grant -> must share the same generated role (dedup).
+      userGrantTwin = await insertUser("u_grant_twin");
+      await assignRole(userGrantTwin, analyst);
+      await insertGrant(userGrantTwin, connX);
+
+      // analyst + a connection-scoped user rule -> connX reachable without a grant.
+      userConnScoped = await insertUser("u_connscoped");
+      await assignRole(userConnScoped, analyst);
+      await insertLegacyRule({ userId: userConnScoped, connectionId: connX, db: "sales", table: "*" });
+
+      // analyst only (analyst has a null rule) but NO grant -> no reachable connection -> no access -> untouched.
+      userNullNoGrant = await insertUser("u_nullnograent");
+      await assignRole(userNullNoGrant, analyst);
+
+      // analyst with nothing extra and no grant -> untouched (stays analyst).
+      userPlain = await insertUser("u_plain");
+      await assignRole(userPlain, analyst);
+
+      // Multi-role, no grants/rules -> collapses to a merged role (one role rule).
       userMulti = await insertUser("u_multi");
       await assignRole(userMulti, analyst);
       await assignRole(userMulti, viewer);
 
-      // Identical multi-role user -> must share the SAME merged role (dedup).
-      userMultiTwin = await insertUser("u_multi_twin");
-      await assignRole(userMultiTwin, analyst);
-      await assignRole(userMultiTwin, viewer);
-
-      // Single role + a user-level rule -> merged role carrying the user policy.
-      userWithRule = await insertUser("u_rule");
-      await assignRole(userWithRule, analyst);
-      await insertLegacyRule({ userId: userWithRule, db: "mine", table: "*" });
-
-      // Single role, no user rules -> untouched.
-      userPlain = await insertUser("u_plain");
-      await assignRole(userPlain, analyst);
-
-      // Admin + viewer -> collapses to admin only (preserves the bypass).
+      // admin + viewer -> collapses to admin only (preserves the bypass).
       userAdmin = await insertUser("u_admin");
       await assignRole(userAdmin, admin);
       await assignRole(userAdmin, viewer);
@@ -269,56 +305,50 @@ for (const dialect of DIALECTS) {
       await runMigrations({ skipSeed: true });
     }, 60_000);
 
-    it("dropped the legacy table and added the one-role index", async () => {
+    it("dropped both legacy tables and added the one-role index", async () => {
       expect(await h.tableExists("rbac_data_access_rules")).toBe(false);
+      expect(await h.tableExists("rbac_user_connections")).toBe(false);
       expect(await h.indexExists("user_roles_user_unique_idx")).toBe(true);
     });
 
-    it("converted the role-level rule into a policy attached to the developer role", async () => {
-      const developer = await roleId("developer");
-      const rows = await h.rawAll(sql`
-        SELECT p.id FROM rbac_role_data_access_policies rp
-        JOIN rbac_data_access_policies p ON p.id = rp.policy_id
-        WHERE rp.role_id = ${developer}
-      `);
-      expect(rows.length).toBeGreaterThan(0);
-    });
-
     it("collapsed every user to exactly one role", async () => {
-      for (const u of [userMulti, userMultiTwin, userWithRule, userPlain, userAdmin]) {
+      for (const u of [userGrant, userGrantTwin, userConnScoped, userPlain, userNullNoGrant, userMulti, userAdmin]) {
         expect(await userRoleIds(u)).toHaveLength(1);
       }
     });
 
-    it("left the single-role, no-rule user untouched (still analyst)", async () => {
+    it("kept the admin user on the admin role (bypass preserved)", async () => {
+      expect(await userRoleIds(userAdmin)).toEqual([await roleId("admin")]);
+    });
+
+    it("left no-access single-role users untouched (still analyst)", async () => {
       const analyst = await roleId("analyst");
       expect(await userRoleIds(userPlain)).toEqual([analyst]);
+      expect(await userRoleIds(userNullNoGrant)).toEqual([analyst]);
     });
 
-    it("kept the admin user on the admin role (bypass preserved)", async () => {
-      const admin = await roleId("admin");
-      expect(await userRoleIds(userAdmin)).toEqual([admin]);
-    });
-
-    it("de-duplicated identical merged users onto the same generated role", async () => {
-      const [a] = await userRoleIds(userMulti);
-      const [b2] = await userRoleIds(userMultiTwin);
-      expect(a).toBe(b2);
-      // ...and that role is neither analyst nor viewer.
-      const analyst = await roleId("analyst");
-      const viewer = await roleId("viewer");
-      expect(a).not.toBe(analyst);
-      expect(a).not.toBe(viewer);
-    });
-
-    it("gave the user-rule user a merged role with a migrated user policy", async () => {
-      const [mergedRole] = await userRoleIds(userWithRule);
+    it("expanded the role's null rule onto a directly-granted connection", async () => {
+      // u_grant should reach connX (a connection-scoped rule exists for it).
+      expect(await userRuleConnIds(userGrant)).toContain(connX);
+      // and that rule carries the analyst null rule's db pattern, scoped to connX.
+      const [role] = await userRoleIds(userGrant);
       const rows = await h.rawAll(sql`
-        SELECT p.name FROM rbac_role_data_access_policies rp
-        JOIN rbac_data_access_policies p ON p.id = rp.policy_id
-        WHERE rp.role_id = ${mergedRole} AND p.name = 'Migrated user: u_rule'
+        SELECT pr.database_pattern AS db FROM rbac_role_data_access_policies rp
+        JOIN rbac_data_access_policy_rules pr ON pr.policy_id = rp.policy_id
+        WHERE rp.role_id = ${role} AND pr.connection_id = ${connX}
       `);
-      expect(rows.length).toBe(1);
+      expect(rows.map((r) => String(r.db))).toContain("analytics");
+    });
+
+    it("de-duplicated identical granted users onto the same generated role", async () => {
+      const [a] = await userRoleIds(userGrant);
+      const [b2] = await userRoleIds(userGrantTwin);
+      expect(a).toBe(b2);
+      expect(a).not.toBe(await roleId("analyst"));
+    });
+
+    it("made a connection-scoped user rule's connection reachable", async () => {
+      expect(await userRuleConnIds(userConnScoped)).toContain(connX);
     });
 
     it("is idempotent — re-running applies nothing and adds no duplicate policies", async () => {

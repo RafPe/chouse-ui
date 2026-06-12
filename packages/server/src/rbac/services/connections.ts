@@ -724,29 +724,28 @@ export async function getUserConnections(userId: string): Promise<ConnectionResp
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .where(inArray(schema.dataAccessPolicyRules.policyId as any, policyIds));
 
-  let grantsAll = false;
+  // A rule grants connection access only when it is an *allow* rule scoped to a
+  // specific connection. Null-connection rules are global db/table scopes that
+  // apply on connections the user can already reach — they do not, by themselves,
+  // grant access to any connection.
   const connectionIdSet = new Set<string>();
   for (const r of ruleRows as Array<{ connectionId: string | null; isAllowed: boolean | number }>) {
-    if (!r.isAllowed) continue;
-    if (r.connectionId === null) grantsAll = true;
-    else connectionIdSet.add(r.connectionId);
+    if (r.isAllowed && r.connectionId) connectionIdSet.add(r.connectionId);
   }
 
   logger.debug(
-    { module: 'Connections', userId, grantsAll, scoped: connectionIdSet.size },
+    { module: 'Connections', userId, scoped: connectionIdSet.size },
     'getUserConnections',
   );
 
-  if (!grantsAll && connectionIdSet.size === 0) return [];
-
-  const baseActive = eq(schema.clickhouseConnections.isActive, true);
-  const whereClause = grantsAll
-    ? baseActive
-    : and(inArray(schema.clickhouseConnections.id, Array.from(connectionIdSet)), baseActive);
+  if (connectionIdSet.size === 0) return [];
 
   const connections = await db.select()
     .from(schema.clickhouseConnections)
-    .where(whereClause)
+    .where(and(
+      inArray(schema.clickhouseConnections.id, Array.from(connectionIdSet)),
+      eq(schema.clickhouseConnections.isActive, true),
+    ))
     .orderBy(desc(schema.clickhouseConnections.isDefault), asc(schema.clickhouseConnections.name));
 
   return connections.map((conn: any) => ({

@@ -64,7 +64,9 @@ describe("connection access via role policy", () => {
     expect(conns.map((c) => c.id)).toContain(connId);
   });
 
-  it("grants all connections for a global (null) allow rule", async () => {
+  it("does NOT grant a connection from a global (null) rule alone", async () => {
+    // A null-connection rule is a global db/table scope; by itself it grants no
+    // connection. Connection access requires a connection-scoped allow rule.
     const db = getDatabase() as any;
     const schema = getSchema();
     const perm = (await db.select().from(schema.permissions).where(eq(schema.permissions.name, "database:view")).limit(1))[0];
@@ -77,6 +79,6 @@ describe("connection access via role policy", () => {
     const user = await createUser({ email: "g@test.local", username: "g", password: "Password123!", roleIds: [role.id] });
 
     const conns = await getUserConnections(user.id);
-    expect(conns.map((c) => c.id)).toContain(connId);
+    expect(conns.map((c) => c.id)).not.toContain(connId);
   });
 });
