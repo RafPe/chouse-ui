@@ -305,9 +305,9 @@ initializeRbac().then(async () => {
   // at boot rather than lazily on the first login request. Isolated so an SSO
   // misconfiguration can't take down the rest of startup.
   try {
-    const { getSsoConfig } = await import("./rbac/sso/config");
-    const ssoConfig = getSsoConfig();
-    if (!ssoConfig.enabled) {
+    const { refreshSsoConfig, getSsoConfig } = await import("./rbac/sso/config");
+    await refreshSsoConfig();
+    if (!getSsoConfig().enabled) {
       logger.info({ module: "SSO" }, "SSO disabled");
     }
   } catch (error) {

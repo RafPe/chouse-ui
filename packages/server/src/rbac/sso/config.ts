@@ -69,7 +69,10 @@ const Oauth2ProviderSchema = CommonProviderSchema.extend({
 
 const ProviderSchema = z.discriminatedUnion('type', [OidcProviderSchema, Oauth2ProviderSchema]);
 
-export type SsoProviderConfig = z.infer<typeof ProviderSchema> & { id: string };
+export type SsoProviderConfig = z.infer<typeof ProviderSchema> & {
+  id: string;
+  source: 'config' | 'database';
+};
 
 export interface SsoConfig {
   enabled: boolean;
@@ -139,22 +142,8 @@ export function loadSsoConfig(env: Record<string, string | undefined> = process.
       );
       continue;
     }
-    providers.set(id, { ...parsed.data, id });
+    providers.set(id, { ...parsed.data, id, source: 'config' });
   }
-
-  // Startup summary so operators can confirm which providers loaded.
-  // Only non-secret fields (id/type/display name) are logged.
-  logger.info(
-    {
-      module: 'SSO',
-      providers: [...providers.values()].map((p) => ({
-        id: p.id,
-        type: p.type,
-        displayName: p.displayName,
-      })),
-    },
-    `SSO enabled — ${providers.size} provider(s) loaded`
-  );
 
   return {
     enabled: true,
@@ -165,15 +154,112 @@ export function loadSsoConfig(env: Record<string, string | undefined> = process.
   };
 }
 
-let cached: SsoConfig | null = null;
+let cache: SsoConfig | null = null;
 
-/** Cached accessor used by routes/services. */
+/** Sync accessor on the hot path. Falls back to env-only until the first refresh. */
 export function getSsoConfig(): SsoConfig {
-  if (!cached) cached = loadSsoConfig();
-  return cached;
+  return cache ?? loadSsoConfig();
 }
 
-/** Test-only: clear the config cache. */
+/** Merge env (read-only) with the DB layer (editable). */
+export async function buildSsoConfig(
+  env: Record<string, string | undefined> = process.env
+): Promise<SsoConfig> {
+  const envCfg = loadSsoConfig(env);
+  const { getDbSettings, listDbProviders, decryptProviderSecret } = await import('./store');
+
+  const providers = new Map(envCfg.providers); // env providers (source 'config')
+  let dbProviders: Awaited<ReturnType<typeof listDbProviders>> = [];
+  try {
+    dbProviders = await listDbProviders();
+  } catch (error) {
+    logger.error(
+      { module: 'SSO', err: error instanceof Error ? error.message : String(error) },
+      'Failed to load DB SSO providers'
+    );
+  }
+  for (const p of dbProviders) {
+    if (!p.enabled) continue;
+    if (providers.has(p.id)) continue; // env wins on conflict
+    const candidate: Record<string, unknown> = {
+      type: p.type,
+      displayName: p.displayName,
+      issuer: p.issuer ?? undefined,
+      authorizationEndpoint: p.authorizationEndpoint ?? undefined,
+      tokenEndpoint: p.tokenEndpoint ?? undefined,
+      userinfoEndpoint: p.userinfoEndpoint ?? undefined,
+      clientId: p.clientId,
+      clientSecret: decryptProviderSecret(p),
+      scopes: p.scopes,
+      claimMapping: p.claimMapping ? parsePairs(p.claimMapping) : undefined,
+      roleMappingClaim: p.roleMappingClaim ?? undefined,
+      roleMapping: p.roleMapping ? parsePairs(p.roleMapping) : undefined,
+    };
+    const parsed = ProviderSchema.safeParse(candidate);
+    if (!parsed.success) {
+      logger.error(
+        {
+          module: 'SSO',
+          provider: p.id,
+          issues: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+        },
+        'Invalid DB SSO provider — skipped'
+      );
+      continue;
+    }
+    providers.set(p.id, { ...parsed.data, id: p.id, source: 'database' });
+  }
+
+  let settings: Awaited<ReturnType<typeof getDbSettings>> = null;
+  try {
+    settings = await getDbSettings();
+  } catch {
+    /* keep env */
+  }
+
+  const baseUrl = (settings?.baseUrl ?? '').trim().replace(/\/$/, '') || envCfg.baseUrl;
+  let enabled = settings ? settings.enabled : envCfg.enabled;
+  if (enabled && !baseUrl) {
+    logger.warn({ module: 'SSO' }, 'SSO enabled but no base_url resolved; disabling SSO');
+    enabled = false;
+  }
+
+  return {
+    enabled,
+    baseUrl,
+    defaultRole: settings ? settings.defaultRole : envCfg.defaultRole,
+    autoLinkByEmail: settings ? settings.autoLinkByEmail : envCfg.autoLinkByEmail,
+    providers,
+  };
+}
+
+/** Rebuild the cache (boot + after each admin mutation). Keeps the previous cache on error. */
+export async function refreshSsoConfig(): Promise<void> {
+  const { resetProviderConfigurationCache } = await import('./client');
+  try {
+    cache = await buildSsoConfig();
+  } catch (error) {
+    logger.error(
+      { module: 'SSO', err: error instanceof Error ? error.message : String(error) },
+      'Failed to rebuild SSO config; keeping previous cache'
+    );
+    return;
+  }
+  resetProviderConfigurationCache();
+  logger.info(
+    {
+      module: 'SSO',
+      providers: [...cache.providers.values()].map((p) => ({
+        id: p.id,
+        type: p.type,
+        source: p.source,
+      })),
+    },
+    `SSO config refreshed — ${cache.providers.size} provider(s)`
+  );
+}
+
+/** Test-only: clear the cache. */
 export function resetSsoConfigCache(): void {
-  cached = null;
+  cache = null;
 }

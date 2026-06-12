@@ -1,5 +1,53 @@
-import { describe, it, expect } from 'bun:test';
-import { loadSsoConfig } from './config';
+import { describe, it, expect, mock } from 'bun:test';
+import { loadSsoConfig, buildSsoConfig } from './config';
+
+// Mock the DB store so buildSsoConfig's dynamic import of './store' resolves
+// to a fixed set of DB providers (no real database). 'okta' collides with the
+// env provider (env must win); 'google' is DB-only.
+mock.module('./store', () => ({
+  getDbSettings: async () => null,
+  listDbProviders: async () => [
+    {
+      id: 'okta',
+      type: 'oidc',
+      displayName: 'Okta (DB)',
+      issuer: 'https://db.okta.com',
+      authorizationEndpoint: null,
+      tokenEndpoint: null,
+      userinfoEndpoint: null,
+      clientId: 'db-cid',
+      clientSecretEncrypted: 'enc:sek',
+      scopes: 'openid',
+      claimMapping: null,
+      roleMappingClaim: null,
+      roleMapping: null,
+      enabled: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      createdBy: null,
+    },
+    {
+      id: 'google',
+      type: 'oidc',
+      displayName: 'Google',
+      issuer: 'https://accounts.google.com',
+      authorizationEndpoint: null,
+      tokenEndpoint: null,
+      userinfoEndpoint: null,
+      clientId: 'g-cid',
+      clientSecretEncrypted: 'enc:sek',
+      scopes: 'openid email',
+      claimMapping: null,
+      roleMappingClaim: null,
+      roleMapping: null,
+      enabled: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      createdBy: null,
+    },
+  ],
+  decryptProviderSecret: () => 'sek',
+}));
 
 function baseEnv(): Record<string, string> {
   return {
@@ -104,5 +152,22 @@ describe('loadSsoConfig', () => {
   it('accepts uppercase provider type values', () => {
     const env = { ...baseEnv(), AUTH_SSO_PROVIDERS_OKTA_TYPE: 'OIDC' };
     expect(loadSsoConfig(env).providers.get('okta')!.type).toBe('oidc');
+  });
+});
+
+describe('buildSsoConfig', () => {
+  it('merges env + DB providers, env wins on id, tags source', async () => {
+    const cfg = await buildSsoConfig(baseEnv());
+
+    // env-only provider keeps source 'config'
+    expect(cfg.providers.get('okta')!.source).toBe('config');
+    // env wins on id conflict: issuer is the env value, not the DB one
+    const okta = cfg.providers.get('okta')!;
+    expect(okta.type).toBe('oidc');
+    if (okta.type === 'oidc') expect(okta.issuer).toBe('https://corp.okta.com');
+    expect(okta.displayName).toBe('Okta');
+
+    // DB-only provider is merged with source 'database'
+    expect(cfg.providers.get('google')!.source).toBe('database');
   });
 });
