@@ -18,6 +18,7 @@ mock.module("../sso/store", () => ({
   upsertDbSettings: mockUpsertDbSettings,
   listDbProviders: mockListDbProviders,
   getDbProvider: mockGetDbProvider,
+  decryptProviderSecret: mock(() => "stored-secret"),
   createDbProvider: mockCreateDbProvider,
   updateDbProvider: mockUpdateDbProvider,
   deleteDbProvider: mockDeleteDbProvider,
@@ -394,6 +395,35 @@ describe("RBAC SSO Admin Routes", () => {
         (call) => call[1] === "sso.provider_test"
       );
       expect((auditCall![3] as { status?: string }).status).toBe("failure");
+    });
+
+    it("falls back to the stored secret when editing (id, no clientSecret)", async () => {
+      mockGetDbProvider.mockResolvedValue(makeDbProvider());
+      mockTestProviderConfig.mockResolvedValue({ ok: true });
+      const res = await app.request("/sso-admin/providers/test", {
+        method: "POST",
+        headers: JSON_AUTH,
+        body: JSON.stringify({
+          id: "google",
+          type: "oidc",
+          issuer: "https://idp.example.com",
+          clientId: "c",
+        }),
+      });
+      expect(res.status).toBe(200);
+      expect(mockTestProviderConfig).toHaveBeenCalled();
+      const passed = mockTestProviderConfig.mock.calls.at(-1)![0] as { clientSecret?: string };
+      expect(passed.clientSecret).toBe("stored-secret");
+    });
+
+    it("400s when no secret is typed and no existing provider matches", async () => {
+      mockGetDbProvider.mockResolvedValue(null);
+      const res = await app.request("/sso-admin/providers/test", {
+        method: "POST",
+        headers: JSON_AUTH,
+        body: JSON.stringify({ id: "ghost", type: "oidc", issuer: "https://x.example.com", clientId: "c" }),
+      });
+      expect(res.status).toBe(400);
     });
   });
 });

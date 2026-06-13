@@ -628,10 +628,11 @@ function ProviderWizard({ open, onClose, editing }: ProviderWizardProps) {
     return payload;
   };
 
-  // The test endpoint needs a concrete secret. When editing without re-entering
-  // one, we can't re-test the stored secret, so a test is "skipped" and the user
-  // must use "Save anyway".
-  const canTest = step2Valid && secretChanged;
+  // The test needs a concrete secret: either a freshly-typed one, or — when
+  // editing a provider that already has a stored secret — the server falls back
+  // to it (we pass the provider id below).
+  const hasStoredSecret = isEditing && (editing?.hasSecret ?? false);
+  const canTest = step2Valid && (secretChanged || hasStoredSecret);
 
   const handleTest = async () => {
     setIsTesting(true);
@@ -640,8 +641,10 @@ function ProviderWizard({ open, onClose, editing }: ProviderWizardProps) {
       const input: Record<string, unknown> = {
         type: draft.type,
         clientId: draft.clientId.trim(),
-        clientSecret: draft.clientSecret,
       };
+      // Typed secret wins; otherwise let the server reuse the stored one by id.
+      if (secretChanged) input.clientSecret = draft.clientSecret;
+      else if (isEditing && editing) input.id = editing.id;
       if (draft.type === "oidc") {
         input.issuer = draft.issuer.trim();
       } else {
@@ -968,9 +971,9 @@ function ProviderWizard({ open, onClose, editing }: ProviderWizardProps) {
               {!canTest && (
                 <p className="flex items-center gap-1.5 text-[11px] text-paper-faint">
                   <AlertCircle className="h-3 w-3" />
-                  {secretChanged
+                  {!step2Valid
                     ? "Complete the endpoint fields to run a test."
-                    : "Enter the client secret to run a live test, or save anyway with the stored secret."}
+                    : "Enter the client secret to run a live test."}
                 </p>
               )}
 
@@ -1094,6 +1097,20 @@ function ProvidersPanel({ canManage }: { canManage: boolean }) {
     },
   });
 
+  // Quick enable/disable straight from the row, no wizard needed.
+  const toggleMutation = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      rbacSsoAdminApi.updateProvider(id, { enabled }),
+    onSuccess: (_data, { enabled }) => {
+      toast.success(enabled ? "Provider enabled" : "Provider disabled");
+      queryClient.invalidateQueries({ queryKey: ["sso-admin-providers"] });
+    },
+    onError: (error: Error) => {
+      log.error("Failed to toggle SSO provider", error);
+      toast.error(`Failed to update provider: ${error.message}`);
+    },
+  });
+
   const openCreate = () => {
     setEditing(null);
     setWizardOpen(true);
@@ -1169,16 +1186,35 @@ function ProvidersPanel({ canManage }: { canManage: boolean }) {
                   </div>
 
                   <div className="flex shrink-0 items-center gap-2">
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1 rounded-xs border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.12em]",
-                        provider.enabled
-                          ? "border-emerald-800 bg-emerald-950/30 text-emerald-300"
-                          : "border-ink-500 bg-ink-100 text-paper-faint",
-                      )}
-                    >
-                      {provider.enabled ? "Enabled" : "Disabled"}
-                    </span>
+                    {canManage && !isConfig ? (
+                      <label className="flex items-center gap-1.5">
+                        <span
+                          className={cn(
+                            "font-mono text-[9px] uppercase tracking-[0.12em]",
+                            provider.enabled ? "text-emerald-300" : "text-paper-faint",
+                          )}
+                        >
+                          {provider.enabled ? "Enabled" : "Disabled"}
+                        </span>
+                        <Switch
+                          checked={provider.enabled}
+                          disabled={toggleMutation.isPending}
+                          onCheckedChange={(v) => toggleMutation.mutate({ id: provider.id, enabled: v })}
+                          aria-label={provider.enabled ? "Disable provider" : "Enable provider"}
+                        />
+                      </label>
+                    ) : (
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-xs border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.12em]",
+                          provider.enabled
+                            ? "border-emerald-800 bg-emerald-950/30 text-emerald-300"
+                            : "border-ink-500 bg-ink-100 text-paper-faint",
+                        )}
+                      >
+                        {provider.enabled ? "Enabled" : "Disabled"}
+                      </span>
+                    )}
 
                     {canManage && !isConfig && (
                       <>

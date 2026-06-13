@@ -46,13 +46,16 @@ const SettingsBody = z.object({
 });
 
 const TestBody = z.object({
+  // When testing an existing provider, `id` lets the server fall back to the
+  // stored (encrypted) secret so the admin needn't re-enter it.
+  id: z.string().regex(SLUG).optional(),
   type: z.enum(["oidc", "oauth2"]),
   issuer: z.string().url().optional(),
   authorizationEndpoint: z.string().url().optional(),
   tokenEndpoint: z.string().url().optional(),
   userinfoEndpoint: z.string().url().optional(),
   clientId: z.string().min(1),
-  clientSecret: z.string().min(1),
+  clientSecret: z.string().min(1).optional(),
 });
 
 /** Strip the encrypted secret and tag the provider as DB-sourced. */
@@ -212,7 +215,27 @@ ssoAdminRoutes.post(
   async (c) => {
     const input = c.req.valid("json");
     const user = getRbacUser(c);
-    const result = await testProviderConfig(input);
+
+    // Prefer a freshly-typed secret; otherwise reuse the stored one of an
+    // existing provider so an edit can re-test without re-entering it.
+    let clientSecret = input.clientSecret;
+    if (!clientSecret && input.id) {
+      const existing = await store.getDbProvider(input.id);
+      if (existing) clientSecret = store.decryptProviderSecret(existing);
+    }
+    if (!clientSecret) {
+      throw AppError.badRequest("Enter a client secret to run a test.");
+    }
+
+    const result = await testProviderConfig({
+      type: input.type,
+      issuer: input.issuer,
+      authorizationEndpoint: input.authorizationEndpoint,
+      tokenEndpoint: input.tokenEndpoint,
+      userinfoEndpoint: input.userinfoEndpoint,
+      clientId: input.clientId,
+      clientSecret,
+    });
     await createAuditLogWithContext(c, AUDIT_ACTIONS.SSO_PROVIDER_TEST, user.sub, {
       resourceType: "sso",
       resourceId: "test",
