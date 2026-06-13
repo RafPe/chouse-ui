@@ -18,6 +18,12 @@ const PROVIDER_PREFIX = 'AUTH_SSO_PROVIDERS_';
 // Provider ids may themselves contain underscores, so we match the suffix
 // against this fixed list and treat the remainder as the provider id.
 const FIELD_SUFFIXES = [
+  'SAML_ALLOW_IDP_INITIATED',
+  'SAML_IDP_CERTIFICATE',
+  'SAML_IDP_ENTITY_ID',
+  'SAML_NAMEID_FORMAT',
+  'SAML_IDP_SSO_URL',
+  'SAML_SP_ENTITY_ID',
   'AUTHORIZATION_ENDPOINT',
   'ROLE_MAPPING_CLAIM',
   'USERINFO_ENDPOINT',
@@ -76,7 +82,21 @@ const Oauth2ProviderSchema = CommonProviderSchema.extend({
   claimMapping: z.record(z.string()).default({ subject: 'sub', email: 'email', username: 'username' }),
 });
 
-const ProviderSchema = z.discriminatedUnion('type', [OidcProviderSchema, Oauth2ProviderSchema]);
+const SamlProviderSchema = z.object({
+  type: z.literal('saml'),
+  displayName: z.string().min(1),
+  samlIdpEntityId: z.string().min(1),
+  samlIdpSsoUrl: z.string().url(),
+  samlIdpCertificate: z.string().min(1),
+  samlSpEntityId: z.string().min(1),
+  samlNameIdFormat: z.string().optional(),
+  samlAllowIdpInitiated: z.boolean().optional(),
+  claimMapping: z.record(z.string()).optional(),
+  roleMappingClaim: z.string().optional(),
+  roleMapping: z.record(z.string()).optional(),
+});
+
+const ProviderSchema = z.discriminatedUnion('type', [OidcProviderSchema, Oauth2ProviderSchema, SamlProviderSchema]);
 
 export type SsoProviderConfig = z.infer<typeof ProviderSchema> & {
   id: string;
@@ -105,6 +125,12 @@ const FIELD_TO_KEY: Record<string, string> = {
   ROLE_MAPPING_CLAIM: 'roleMappingClaim',
   ROLE_MAPPING: 'roleMapping',
   AUTH_PARAMS: 'authParams',
+  SAML_IDP_ENTITY_ID: 'samlIdpEntityId',
+  SAML_IDP_SSO_URL: 'samlIdpSsoUrl',
+  SAML_IDP_CERTIFICATE: 'samlIdpCertificate',
+  SAML_SP_ENTITY_ID: 'samlSpEntityId',
+  SAML_NAMEID_FORMAT: 'samlNameIdFormat',
+  SAML_ALLOW_IDP_INITIATED: 'samlAllowIdpInitiated',
 };
 
 export function loadSsoConfig(env: Record<string, string | undefined> = process.env): SsoConfig {
@@ -144,6 +170,8 @@ export function loadSsoConfig(env: Record<string, string | undefined> = process.
     if (typeof fields.claimMapping === 'string') candidate.claimMapping = parsePairs(fields.claimMapping);
     if (typeof fields.roleMapping === 'string') candidate.roleMapping = parsePairs(fields.roleMapping);
     if (typeof fields.authParams === 'string') candidate.authParams = parsePairs(fields.authParams);
+    if (typeof fields.samlAllowIdpInitiated === 'string') candidate.samlAllowIdpInitiated = fields.samlAllowIdpInitiated.toLowerCase() === 'true';
+    if (typeof fields.samlIdpCertificate === 'string') candidate.samlIdpCertificate = fields.samlIdpCertificate.replace(/\\n/g, '\n');
 
     const parsed = ProviderSchema.safeParse(candidate);
     if (!parsed.success) {
@@ -192,21 +220,48 @@ export async function buildSsoConfig(
   for (const p of dbProviders) {
     if (!p.enabled) continue;
     if (providers.has(p.id)) continue; // env wins on conflict
-    const candidate: Record<string, unknown> = {
-      type: p.type,
-      displayName: p.displayName,
-      issuer: p.issuer ?? undefined,
-      authorizationEndpoint: p.authorizationEndpoint ?? undefined,
-      tokenEndpoint: p.tokenEndpoint ?? undefined,
-      userinfoEndpoint: p.userinfoEndpoint ?? undefined,
-      clientId: p.clientId,
-      clientSecret: decryptProviderSecret(p),
-      scopes: p.scopes,
-      claimMapping: p.claimMapping ? parsePairs(p.claimMapping) : undefined,
-      roleMappingClaim: p.roleMappingClaim ?? undefined,
-      roleMapping: p.roleMapping ? parsePairs(p.roleMapping) : undefined,
-      authParams: p.authParams ? parsePairs(p.authParams) : undefined,
-    };
+    let candidate: Record<string, unknown>;
+    if (p.type === 'saml') {
+      // Task 7 adds these saml columns to DbSsoProvider; cast defensively so
+      // this compiles standalone before the store schema is updated.
+      const sp = p as typeof p & {
+        samlIdpEntityId?: string | null;
+        samlIdpSsoUrl?: string | null;
+        samlIdpCertificate?: string | null;
+        samlSpEntityId?: string | null;
+        samlNameIdFormat?: string | null;
+        samlAllowIdpInitiated?: boolean | null;
+      };
+      candidate = {
+        type: 'saml',
+        displayName: p.displayName,
+        samlIdpEntityId: sp.samlIdpEntityId ?? undefined,
+        samlIdpSsoUrl: sp.samlIdpSsoUrl ?? undefined,
+        samlIdpCertificate: sp.samlIdpCertificate ?? undefined,
+        samlSpEntityId: (sp.samlSpEntityId ?? '') || envCfg.baseUrl, // default SP entityID = base URL
+        samlNameIdFormat: sp.samlNameIdFormat ?? undefined,
+        samlAllowIdpInitiated: sp.samlAllowIdpInitiated ?? undefined,
+        claimMapping: p.claimMapping ? parsePairs(p.claimMapping) : undefined,
+        roleMappingClaim: p.roleMappingClaim ?? undefined,
+        roleMapping: p.roleMapping ? parsePairs(p.roleMapping) : undefined,
+      };
+    } else {
+      candidate = {
+        type: p.type,
+        displayName: p.displayName,
+        issuer: p.issuer ?? undefined,
+        authorizationEndpoint: p.authorizationEndpoint ?? undefined,
+        tokenEndpoint: p.tokenEndpoint ?? undefined,
+        userinfoEndpoint: p.userinfoEndpoint ?? undefined,
+        clientId: p.clientId,
+        clientSecret: decryptProviderSecret(p),
+        scopes: p.scopes,
+        claimMapping: p.claimMapping ? parsePairs(p.claimMapping) : undefined,
+        roleMappingClaim: p.roleMappingClaim ?? undefined,
+        roleMapping: p.roleMapping ? parsePairs(p.roleMapping) : undefined,
+        authParams: p.authParams ? parsePairs(p.authParams) : undefined,
+      };
+    }
     const parsed = ProviderSchema.safeParse(candidate);
     if (!parsed.success) {
       logger.error(

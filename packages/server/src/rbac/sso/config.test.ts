@@ -182,6 +182,33 @@ describe('loadSsoConfig', () => {
   });
 });
 
+describe('SAML provider', () => {
+  it('parses a saml env provider', () => {
+    const env = {
+      ...baseEnv(),
+      AUTH_SSO_PROVIDERS_OKTA_TYPE: 'saml',
+      AUTH_SSO_PROVIDERS_OKTA_DISPLAY_NAME: 'Okta SAML',
+      AUTH_SSO_PROVIDERS_OKTA_SAML_IDP_ENTITY_ID: 'https://idp.test/entity',
+      AUTH_SSO_PROVIDERS_OKTA_SAML_IDP_SSO_URL: 'https://idp.test/sso',
+      AUTH_SSO_PROVIDERS_OKTA_SAML_IDP_CERTIFICATE: 'PEMDATA',
+      AUTH_SSO_PROVIDERS_OKTA_SAML_SP_ENTITY_ID: 'https://app.test/sp',
+      AUTH_SSO_PROVIDERS_OKTA_SAML_ALLOW_IDP_INITIATED: 'true',
+    } as Record<string, string | undefined>;
+    // baseEnv defines OKTA as oidc — remove the oidc-only keys so the id is unambiguously SAML
+    delete env.AUTH_SSO_PROVIDERS_OKTA_ISSUER;
+    delete env.AUTH_SSO_PROVIDERS_OKTA_CLIENT_ID;
+    delete env.AUTH_SSO_PROVIDERS_OKTA_CLIENT_SECRET;
+    delete env.AUTH_SSO_PROVIDERS_OKTA_SCOPES;
+    const p = loadSsoConfig(env as Record<string, string>).providers.get('okta')!;
+    expect(p.type).toBe('saml');
+    if (p.type === 'saml') {
+      expect(p.samlIdpEntityId).toBe('https://idp.test/entity');
+      expect(p.samlSpEntityId).toBe('https://app.test/sp');
+      expect(p.samlAllowIdpInitiated).toBe(true);
+    }
+  });
+});
+
 describe('buildSsoConfig', () => {
   it('merges env + DB providers, env wins on id, tags source', async () => {
     const cfg = await buildSsoConfig(baseEnv());
