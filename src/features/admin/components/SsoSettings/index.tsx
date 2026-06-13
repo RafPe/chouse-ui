@@ -381,7 +381,7 @@ function SettingsPanel({ canManage }: { canManage: boolean }) {
             className={cn(
               "ml-auto inline-flex items-center gap-1 rounded-xs border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.12em]",
               isConfigSourced
-                ? "border-ink-500 bg-ink-100 text-paper-faint"
+                ? "border-amber-900/60 bg-amber-950/30 text-amber-200"
                 : "border-ink-500 bg-ink-200 text-paper-faint",
             )}
           >
@@ -394,11 +394,11 @@ function SettingsPanel({ canManage }: { canManage: boolean }) {
       <div className="space-y-4 p-4">
         {/* Config-sourced settings are read-only — explain why edits are disabled. */}
         {isConfigSourced && (
-          <div className="flex items-start gap-2 rounded-xs border border-ink-500 bg-ink-200 px-3 py-2.5">
-            <Lock className="mt-0.5 h-4 w-4 shrink-0 text-paper-dim" />
-            <p className="text-[12px] text-paper-muted">
+          <div className="flex items-start gap-2 rounded-xs border border-amber-900/60 bg-amber-950/30 px-3 py-2.5">
+            <Lock className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+            <p className="text-[12px] text-amber-200">
               These settings come from environment/YAML configuration and are read-only. Edit them in your
-              config (<code className="font-mono text-paper-muted">AUTH_SSO_*</code>), or remove that config to
+              config (<code className="font-mono text-amber-100">AUTH_SSO_*</code>), or remove that config to
               manage SSO settings here.
             </p>
           </div>
