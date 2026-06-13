@@ -32,8 +32,9 @@ const VERSION_CHECKS: Record<string, () => Promise<void>> = {
     // Created here, dropped by 1.27.0 — so it must be absent in the final state.
     expect(await h.tableExists("rbac_data_access_rules")).toBe(false);
   },
-  "1.2.0": async () => expect(await h.tableExists("rbac_clickhouse_users_metadata")).toBe(true),
-  "1.2.1": async () => expect(await h.columnExists("rbac_clickhouse_users_metadata", "auth_type")).toBe(true),
+  // Created here, dropped by 1.30.0 — so it must be absent in the final state.
+  "1.2.0": async () => expect(await h.tableExists("rbac_clickhouse_users_metadata")).toBe(false),
+  "1.2.1": async () => expect(await h.columnExists("rbac_clickhouse_users_metadata", "auth_type")).toBe(false),
   "1.2.2": async () => expect(await h.roleExists("guest")).toBe(true),
   "1.3.0": async () => {
     expect(await h.tableExists("rbac_user_preferences")).toBe(true);
@@ -101,6 +102,21 @@ const VERSION_CHECKS: Record<string, () => Promise<void>> = {
     expect(await h.tableExists("rbac_user_connections")).toBe(false);
   },
   "1.29.0": async () => {
+    for (const p of ["clickhouse:roles:view", "clickhouse:roles:create", "clickhouse:roles:update", "clickhouse:roles:delete", "clickhouse:roles:assign"]) {
+      expect(await h.permissionExists(p)).toBe(true);
+    }
+    expect(await h.roleHasPermission("super_admin", "clickhouse:roles:create")).toBe(true);
+    expect(await h.roleHasPermission("admin", "clickhouse:roles:assign")).toBe(true);
+  },
+  "1.30.0": async () => {
+    // ClickHouse is now the source of truth; the local metadata cache is gone.
+    expect(await h.tableExists("rbac_clickhouse_users_metadata")).toBe(false);
+  },
+  "1.31.0": async () => {
+    expect(await h.tableExists("rbac_clickhouse_role_state")).toBe(true);
+    expect(await h.indexExists("ch_role_state_conn_role_idx")).toBe(true);
+  },
+  "1.32.0": async () => {
     expect(await h.tableExists("rbac_sso_settings")).toBe(true);
     expect(await h.tableExists("rbac_sso_providers")).toBe(true);
     expect(await h.permissionExists("sso:view")).toBe(true);
@@ -111,10 +127,10 @@ const VERSION_CHECKS: Record<string, () => Promise<void>> = {
     expect(await h.roleHasPermission("super_admin", "sso:delete")).toBe(true);
     expect(await h.roleHasPermission("admin", "sso:view")).toBe(true);
   },
-  "1.30.0": async () => {
+  "1.33.0": async () => {
     expect(await h.columnExists("rbac_sso_providers", "auth_params")).toBe(true);
   },
-  "1.31.0": async () => {
+  "1.34.0": async () => {
     for (const col of [
       "saml_idp_entity_id", "saml_idp_sso_url", "saml_idp_certificate",
       "saml_sp_entity_id", "saml_nameid_format", "saml_allow_idp_initiated",
@@ -124,7 +140,7 @@ const VERSION_CHECKS: Record<string, () => Promise<void>> = {
     expect(await h.columnIsNullable("rbac_sso_providers", "client_id")).toBe(true);
     expect(await h.columnIsNullable("rbac_sso_providers", "scopes")).toBe(true);
   },
-  "1.32.0": async () => {
+  "1.35.0": async () => {
     expect(await h.columnExists("rbac_sso_providers", "saml_trust_email_verified")).toBe(true);
   },
 };
@@ -386,22 +402,22 @@ for (const dialect of DIALECTS) {
     });
   });
 
-  describe(`migrations · 1.31.0 sso provider rebuild [${dialect}]`, () => {
-    // 1.31.0 rebuilds rbac_sso_providers on SQLite (CREATE __new -> INSERT…SELECT ->
+  describe(`migrations · 1.34.0 sso provider rebuild [${dialect}]`, () => {
+    // 1.34.0 rebuilds rbac_sso_providers on SQLite (CREATE __new -> INSERT…SELECT ->
     // DROP -> RENAME), which MOVES rows. Prove a pre-existing OIDC provider survives
     // the rebuild intact, the new SAML columns are NULL, and re-running is a no-op.
     const provId = randomUUID();
 
     beforeAll(async () => {
       await h.freshDatabase(dialect, pg);
-      // State BEFORE the SAML migration (rbac_sso_providers exists, pre-1.31.0 shape).
-      await runMigrations({ skipSeed: true, through: "1.30.0" });
+      // State BEFORE the SAML migration (rbac_sso_providers exists, pre-1.34.0 shape).
+      await runMigrations({ skipSeed: true, through: "1.33.0" });
 
       await h.rawRun(sql`INSERT INTO rbac_sso_providers
         (id, type, display_name, issuer, client_id, client_secret_encrypted, scopes, enabled, created_at, updated_at)
         VALUES (${provId}, 'oidc', 'Acme OIDC', 'https://idp.acme.test', 'acme-client', 'enc:secret', 'openid email profile', ${b(true)}, ${now()}, ${now()})`);
 
-      // Apply the remaining migrations (1.31.0 — the rebuild).
+      // Apply the remaining migrations (1.34.0 — the rebuild).
       await runMigrations({ skipSeed: true });
     }, 60_000);
 
