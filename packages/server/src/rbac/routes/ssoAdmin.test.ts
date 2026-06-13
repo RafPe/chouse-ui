@@ -261,6 +261,7 @@ describe("RBAC SSO Admin Routes", () => {
       const env = providers.find((p) => p.id === "google");
       expect(env).toBeDefined();
       expect(env!.source).toBe("config");
+      expect(env!.linkedUserCount).toBe(3);
 
       const db = providers.find((p) => p.id === "okta");
       expect(db).toBeDefined();

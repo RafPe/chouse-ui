@@ -128,16 +128,19 @@ ssoAdminRoutes.put(
 ssoAdminRoutes.get("/providers", requirePermission(PERMISSIONS.SSO_VIEW), async (c) => {
   const cfg = getSsoConfig();
   const dbProviders = await store.listDbProviders();
-  const envProviders = [...cfg.providers.values()]
-    .filter((p) => p.source === "config")
-    .map((p) => ({
-      id: p.id,
-      type: p.type,
-      displayName: p.displayName,
-      source: "config" as const,
-      enabled: true,
-      hasSecret: true,
-    }));
+  const envProviders = await Promise.all(
+    [...cfg.providers.values()]
+      .filter((p) => p.source === "config")
+      .map(async (p) => ({
+        id: p.id,
+        type: p.type,
+        displayName: p.displayName,
+        source: "config" as const,
+        enabled: true,
+        hasSecret: true,
+        linkedUserCount: await store.countIdentitiesByProvider(p.id),
+      }))
+  );
   const withCounts = await Promise.all(
     dbProviders.map(async (p) => ({
       ...maskProvider(p),
