@@ -44,6 +44,8 @@ export interface ClickHouseUser {
   storage?: string;
   /** True when the user is config-managed and cannot be modified via SQL. */
   readonly?: boolean;
+  /** Number of direct (non-role) grants on the user — legacy users to migrate. */
+  directGrantCount?: number;
 }
 
 export interface ClickHouseUserDetail extends ClickHouseUser {
@@ -261,6 +263,9 @@ export async function listClickHouseUsers(service: ClickHouseService): Promise<C
     readonly: isReadonlyAccessStorage(u.storage),
   }));
 
+  // Best-effort role assignments + direct-grant counts; non-fatal if they fail.
+  const byRole = new Map<string, string[]>();
+  const byDirectGrant = new Map<string, number>();
   try {
     const roleRows = await service.executeQuery<{ user_name: string; roles: string[] }>(
       `SELECT user_name, groupArray(granted_role_name) AS roles
@@ -268,11 +273,23 @@ export async function listClickHouseUsers(service: ClickHouseService): Promise<C
        WHERE user_name IS NOT NULL
        GROUP BY user_name`,
     );
-    const byUser = new Map<string, string[]>((roleRows.data || []).map((r) => [r.user_name, r.roles]));
-    return users.map((u) => ({ ...u, roles: byUser.get(u.name) ?? [] }));
+    for (const r of roleRows.data || []) byRole.set(r.user_name, r.roles);
   } catch {
-    return users.map((u) => ({ ...u, roles: [] }));
+    // ignore — roles default to []
   }
+  try {
+    const grantRows = await service.executeQuery<{ user_name: string; cnt: string | number }>(
+      `SELECT user_name, count() AS cnt FROM system.grants WHERE user_name IS NOT NULL GROUP BY user_name`,
+    );
+    for (const r of grantRows.data || []) byDirectGrant.set(r.user_name, Number(r.cnt));
+  } catch {
+    // ignore — counts default to 0
+  }
+  return users.map((u) => ({
+    ...u,
+    roles: byRole.get(u.name) ?? [],
+    directGrantCount: byDirectGrant.get(u.name) ?? 0,
+  }));
 }
 
 /** Roles granted to a user, plus the user's default-role configuration. */
@@ -391,14 +408,18 @@ async function isUserReadonly(service: ClickHouseService, username: string): Pro
 }
 
 /**
- * Capture a read-only (config-managed, e.g. users.xml) user's grants into a
- * reusable native role. Such a user can't be modified via SQL, so this only
- * materializes its grants into a new role — the user is left exactly as-is.
+ * Capture a user's direct grants into a reusable native role — the migration
+ * path for users that were created with direct grants (legacy / created outside
+ * this UI).
  *
- * Writable (SQL-managed) users are intentionally not supported: assign roles to
- * them directly instead.
+ * For a writable (SQL-managed) user this also switches the user to role-based:
+ * grant the new role, make all roles default, and revoke the now-duplicated
+ * direct grants.
  *
- * @throws Error when the user is writable, or has no direct grants to extract.
+ * For a read-only (config-managed, e.g. users.xml) user we can't modify the
+ * user, so we only materialize its grants into the role — the user is left as-is.
+ *
+ * @throws Error when the user has no direct grants to extract.
  */
 export async function extractRoleFromUser(
   service: ClickHouseService,
@@ -406,16 +427,24 @@ export async function extractRoleFromUser(
   roleName: string,
   cluster?: string,
 ): Promise<void> {
-  if (!(await isUserReadonly(service, username))) {
-    throw new Error(
-      `Extract to role is only available for read-only (config-managed) users. '${username}' is SQL-managed — assign roles to it directly instead.`,
-    );
-  }
+  const readonly = await isUserReadonly(service, username);
 
   const directGrants = await getUserDirectGrants(service, username);
   if (directGrants.length === 0) {
     throw new Error('User has no direct grants to extract');
   }
 
-  await execAll(service, generateCreateRoleDDL({ name: roleName, cluster, grants: directGrants }));
+  const statements: string[] = [
+    ...generateCreateRoleDDL({ name: roleName, cluster, grants: directGrants }),
+  ];
+
+  // Writable user → convert it to role-based; read-only user → role only.
+  if (!readonly) {
+    const grantRole = grantRolesStatement([roleName], username, cluster);
+    if (grantRole) statements.push(grantRole);
+    statements.push(defaultRoleStatement('ALL', username, cluster));
+    statements.push(...buildGrantDiffStatements(directGrants, [], { grantee: quoteIdent(username), cluster }));
+  }
+
+  await execAll(service, statements);
 }

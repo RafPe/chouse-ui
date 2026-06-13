@@ -1041,6 +1041,8 @@ export interface ClickHouseUser {
   storage?: string;
   /** True when config-managed (e.g. users.xml) — cannot be modified via SQL. */
   readonly?: boolean;
+  /** Number of direct (non-role) grants — legacy users that can be synced to a role. */
+  directGrantCount?: number;
 }
 
 export interface ClickHouseUserDetail extends ClickHouseUser {

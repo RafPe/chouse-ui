@@ -147,13 +147,16 @@ describe('writes', () => {
 });
 
 describe('extractRoleFromUser', () => {
-  it('rejects extract for a writable (SQL-managed) user', async () => {
+  it('for a writable user, converts to role-based (create role, grant, revoke direct grants)', async () => {
     const { service, calls } = mockService([
       { match: /SELECT storage FROM system\.users WHERE name/, data: [{ storage: 'local directory' }] },
       { match: /system\.grants\s+WHERE user_name/, data: [{ access_type: 'SELECT', database: 'db', table: null, column: null, is_partial_revoke: 0, grant_option: 0 }] },
     ]);
-    await expect(extractRoleFromUser(service, 'alice', 'extracted_alice')).rejects.toThrow('only available for read-only');
-    expect(calls.some((c) => c.startsWith('CREATE ROLE'))).toBe(false);
+    await extractRoleFromUser(service, 'alice', 'extracted_alice');
+    expect(calls).toContain('CREATE ROLE IF NOT EXISTS `extracted_alice`');
+    expect(calls).toContain('GRANT SELECT ON `db`.* TO `extracted_alice`');
+    expect(calls).toContain('GRANT `extracted_alice` TO `alice`');
+    expect(calls).toContain('REVOKE SELECT ON `db`.* FROM `alice`');
   });
 
   it('throws when a read-only user has no direct grants', async () => {

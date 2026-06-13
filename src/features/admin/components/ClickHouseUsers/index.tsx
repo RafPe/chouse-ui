@@ -69,6 +69,7 @@ export default function ClickHouseUsersManagement() {
 
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [extractTarget, setExtractTarget] = useState<string | null>(null);
+  const [extractReadonly, setExtractReadonly] = useState(false);
   const [extractRoleName, setExtractRoleName] = useState("");
 
   const loadAll = useCallback(async (isRetry = false) => {
@@ -128,7 +129,11 @@ export default function ClickHouseUsersManagement() {
     if (!extractTarget || !extractRoleName.trim()) return;
     try {
       await rbacClickHouseUsersApi.extractRole(extractTarget, extractRoleName.trim());
-      toast.success(`Created role "${extractRoleName.trim()}" from ${extractTarget}'s grants`);
+      toast.success(
+        extractReadonly
+          ? `Created role "${extractRoleName.trim()}" from ${extractTarget}'s grants`
+          : `Synced ${extractTarget}'s grants into role "${extractRoleName.trim()}"`,
+      );
       setExtractTarget(null);
       setExtractRoleName("");
       await loadAll();
@@ -236,8 +241,17 @@ export default function ClickHouseUsersManagement() {
                   <td className="px-4 py-2.5 font-mono text-[11px] text-paper-muted">{user.host_ip || user.host_names || "any"}</td>
                   <td className="px-4 py-2.5 text-right">
                     <div className="flex justify-end gap-1">
-                      {canExtractRole && user.readonly && (
-                        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-xs text-paper-dim hover:bg-ink-200 hover:text-paper" title="Capture this read-only user's grants into a reusable role (user is left unchanged)" onClick={() => { setExtractTarget(user.name); setExtractRoleName(`${user.name}_role`); }} aria-label="Extract to role">
+                      {canExtractRole && (user.readonly || (user.directGrantCount ?? 0) > 0) && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 rounded-xs text-paper-dim hover:bg-ink-200 hover:text-paper"
+                          title={user.readonly
+                            ? "Capture this read-only user's grants into a reusable role (user is left unchanged)"
+                            : "Sync this user's direct grants into a role and switch the user to role-based"}
+                          onClick={() => { setExtractTarget(user.name); setExtractReadonly(!!user.readonly); setExtractRoleName(`${user.name}_role`); }}
+                          aria-label="Sync grants to role"
+                        >
                           <Wand2 className="h-4 w-4" />
                         </Button>
                       )}
@@ -289,9 +303,13 @@ export default function ClickHouseUsersManagement() {
       <Dialog open={extractTarget !== null} onOpenChange={(open) => { if (!open) { setExtractTarget(null); setExtractRoleName(""); } }}>
         <DialogContent className="rounded-xs border-ink-500 bg-ink-100">
           <DialogHeader>
-            <DialogTitle className="text-[16px] font-semibold tracking-tight text-paper">Extract role from "{extractTarget}"</DialogTitle>
+            <DialogTitle className="text-[16px] font-semibold tracking-tight text-paper">
+              {extractReadonly ? "Extract role from" : "Sync grants to role for"} "{extractTarget}"
+            </DialogTitle>
             <DialogDescription className="text-[12px] text-paper-muted">
-              Captures this read-only user's grants into a new reusable role. The user itself is config-managed and is left unchanged.
+              {extractReadonly
+                ? "Captures this read-only user's grants into a new reusable role. The user itself is config-managed and is left unchanged."
+                : "Creates a role from this user's direct grants, assigns it to the user, and removes the now-duplicated direct grants — migrating the user to role-based access."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -301,7 +319,7 @@ export default function ClickHouseUsersManagement() {
           <DialogFooter>
             <Button variant="outline" onClick={() => { setExtractTarget(null); setExtractRoleName(""); }} className={outlineBtn}>Cancel</Button>
             <Button onClick={handleExtractRole} disabled={!extractRoleName.trim()} className={brandBtn}>
-              <Wand2 className="h-3.5 w-3.5" /> Extract role
+              <Wand2 className="h-3.5 w-3.5" /> {extractReadonly ? "Extract role" : "Sync to role"}
             </Button>
           </DialogFooter>
         </DialogContent>
