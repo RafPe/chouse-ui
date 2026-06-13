@@ -34,6 +34,8 @@ import {
   ChevronsUpDown,
   X,
   MoreVertical,
+  Power,
+  PowerOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { log } from "@/lib/log";
@@ -1091,6 +1093,7 @@ function ProvidersPanel({ canManage }: { canManage: boolean }) {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editing, setEditing] = useState<SsoAdminProvider | null>(null);
   const [toDelete, setToDelete] = useState<SsoAdminProvider | null>(null);
+  const [toDisable, setToDisable] = useState<SsoAdminProvider | null>(null);
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => rbacSsoAdminApi.deleteProvider(id),
@@ -1112,6 +1115,7 @@ function ProvidersPanel({ canManage }: { canManage: boolean }) {
     onSuccess: (_data, { enabled }) => {
       toast.success(enabled ? "Provider enabled" : "Provider disabled");
       queryClient.invalidateQueries({ queryKey: ["sso-admin-providers"] });
+      setToDisable(null);
     },
     onError: (error: Error) => {
       log.error("Failed to toggle SSO provider", error);
@@ -1193,36 +1197,20 @@ function ProvidersPanel({ canManage }: { canManage: boolean }) {
                     </div>
                   </div>
 
-                  <div className="flex shrink-0 items-center gap-2">
-                    {canManage && !isConfig ? (
-                      <label className="flex items-center gap-1.5">
-                        <span
-                          className={cn(
-                            "font-mono text-[9px] uppercase tracking-[0.12em]",
-                            provider.enabled ? "text-emerald-300" : "text-paper-faint",
-                          )}
-                        >
-                          {provider.enabled ? "Enabled" : "Disabled"}
-                        </span>
-                        <Switch
-                          checked={provider.enabled}
-                          disabled={toggleMutation.isPending}
-                          onCheckedChange={(v) => toggleMutation.mutate({ id: provider.id, enabled: v })}
-                          aria-label={provider.enabled ? "Disable provider" : "Enable provider"}
-                        />
-                      </label>
-                    ) : (
+                  <div className="flex shrink-0 items-center gap-3">
+                    {/* Status dot — green when enabled, grey when disabled (all providers). */}
+                    <span className="inline-flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.12em]">
                       <span
                         className={cn(
-                          "inline-flex items-center gap-1 rounded-xs border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.12em]",
-                          provider.enabled
-                            ? "border-emerald-800 bg-emerald-950/30 text-emerald-300"
-                            : "border-ink-500 bg-ink-100 text-paper-faint",
+                          "h-2 w-2 rounded-full",
+                          provider.enabled ? "bg-emerald-400" : "bg-paper-faint",
                         )}
-                      >
+                        aria-hidden
+                      />
+                      <span className={provider.enabled ? "text-emerald-300" : "text-paper-faint"}>
                         {provider.enabled ? "Enabled" : "Disabled"}
                       </span>
-                    )}
+                    </span>
 
                     {canManage && !isConfig && (
                       <DropdownMenu>
@@ -1237,6 +1225,25 @@ function ProvidersPanel({ canManage }: { canManage: boolean }) {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="rounded-xs border-ink-500 bg-ink-100 text-paper">
+                          {provider.enabled ? (
+                            <DropdownMenuItem
+                              onClick={() => setToDisable(provider)}
+                              className="cursor-pointer text-amber-300 focus:bg-amber-950/40 focus:text-amber-200"
+                            >
+                              <PowerOff className="mr-2 h-3.5 w-3.5" />
+                              Disable
+                            </DropdownMenuItem>
+                          ) : (
+                            <DropdownMenuItem
+                              onClick={() => toggleMutation.mutate({ id: provider.id, enabled: true })}
+                              disabled={toggleMutation.isPending}
+                              className="cursor-pointer text-emerald-300 focus:bg-emerald-950/40 focus:text-emerald-200"
+                            >
+                              <Power className="mr-2 h-3.5 w-3.5" />
+                              Enable
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuSeparator className="bg-ink-500" />
                           <DropdownMenuItem
                             onClick={() => openEdit(provider)}
                             className="cursor-pointer focus:bg-ink-200"
@@ -1303,6 +1310,51 @@ function ProvidersPanel({ canManage }: { canManage: boolean }) {
                 <>
                   <Trash2 className="h-3.5 w-3.5" />
                   Delete & unlink
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Disable confirmation — warns about impact on linked users (links preserved). */}
+      <AlertDialog open={!!toDisable} onOpenChange={(o) => !o && setToDisable(null)}>
+        <AlertDialogContent className="rounded-xs border-ink-500 bg-ink-100">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-paper">
+              <AlertTriangle className="h-4 w-4 text-amber-300" />
+              Disable SSO provider
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-paper-muted">
+              Disable <strong className="text-paper">{toDisable?.displayName}</strong>? It will be hidden from the
+              login page, and <strong className="text-paper">{toDisable?.linkedUserCount ?? 0}</strong> linked user(s)
+              won't be able to sign in via SSO until you re-enable it. Their identity links are preserved.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={toggleMutation.isPending}
+              className="h-9 rounded-xs border-ink-500 bg-ink-200 text-paper hover:border-ink-700 hover:bg-ink-300"
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                if (toDisable) toggleMutation.mutate({ id: toDisable.id, enabled: false });
+              }}
+              disabled={toggleMutation.isPending}
+              className="h-9 gap-2 rounded-xs border border-amber-900/60 bg-amber-950/40 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-200 hover:bg-amber-950/60"
+            >
+              {toggleMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                  Disabling…
+                </>
+              ) : (
+                <>
+                  <PowerOff className="h-3.5 w-3.5" />
+                  Disable
                 </>
               )}
             </AlertDialogAction>
