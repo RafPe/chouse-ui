@@ -101,7 +101,7 @@ const ADMIN_TAB_GROUPS: AdminTabGroup[] = [
   { label: "Access control", icon: Shield, tabs: ["users", "roles", "data-access"] },
   { label: "Data sources", icon: Server, tabs: ["connections", "clickhouse-users"] },
   { label: "Intelligence", icon: Bot, tabs: ["ai-models"] },
-  { label: "Security", icon: FileText, tabs: ["audit"] },
+  { label: "Security", icon: FileText, tabs: ["sso", "audit"] },
 ];
 
 // Top-level group selector — segmented chip (icon + label), active one filled.
