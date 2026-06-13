@@ -8,6 +8,8 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { getSsoConfig } from "./config";
 import { buildAuthorizationRedirect, exchangeCodeForIdentity } from "./client";
+import { buildSamlAuthnRequest, validateSamlResponse, resolveSamlProviderByIssuer } from "./saml/client";
+import { stashTokens, claimTokens, markAssertionSeen } from "./saml/handoff";
 import { provisionSsoUser } from "./service";
 import { describeSsoError } from "./errors";
 import {
@@ -78,6 +80,33 @@ ssoRoutes.get("/:provider/start", async (c) => {
       "SSO start rejected — unknown provider",
     );
     return c.redirect("/login?ssoError=" + encodeURIComponent(`Unknown SSO provider "${providerId}".`), 302);
+  }
+
+  if (provider.type === "saml") {
+    const redirect = safeRedirect(c.req.query("redirect"));
+    const acsUrl = `${config.baseUrl}/auth/sso/saml/acs`;
+    // RelayState carries our signed state (provider id + redirect) for SP-initiated correlation.
+    const relayState = await signStatePayload({
+      provider: provider.id,
+      state: "saml",
+      nonce: "saml",
+      codeVerifier: "saml",
+      redirect,
+    });
+    try {
+      const { url } = await buildSamlAuthnRequest(provider, acsUrl, relayState);
+      return c.redirect(url, 302);
+    } catch (error) {
+      requestLogger(c.get("requestId")).error(
+        { module: "SSO", provider: provider.id, ...describeSsoError(error) },
+        "SAML AuthnRequest build failed"
+      );
+      return c.redirect(
+        "/login?ssoError=" +
+          encodeURIComponent("SSO provider is currently unavailable."),
+        302
+      );
+    }
   }
 
   const redirect = safeRedirect(c.req.query("redirect"));
@@ -234,5 +263,120 @@ ssoRoutes.post("/callback", zValidator("json", CallbackSchema), async (c) => {
     throw AppError.unauthorized("SSO sign-in failed. Please try again.");
   }
 });
+
+/**
+ * POST /rbac/auth/sso/saml/acs — SAML 2.0 Assertion Consumer Service.
+ *
+ * A single endpoint for all SAML providers. The provider is resolved by the
+ * assertion Issuer; node-saml then validates the signature against THAT
+ * provider's certificate, so Issuer-based routing is safe (a forged Issuer
+ * routes to a provider whose cert won't match → validation fails). Signature
+ * validation runs BEFORE provisioning; the replay check runs AFTER validation
+ * so only signature-valid assertions are recorded. Tokens never appear in the
+ * redirect URL — only a one-time handoff code.
+ */
+ssoRoutes.post("/saml/acs", async (c) => {
+  const config = getSsoConfig();
+  const ipAddress = getClientIp(c);
+  const form = await c.req.parseBody();
+  const SAMLResponse = typeof form.SAMLResponse === "string" ? form.SAMLResponse : "";
+  const RelayState = typeof form.RelayState === "string" ? form.RelayState : undefined;
+  let providerId = "unknown";
+  try {
+    if (!config.enabled) throw AppError.badRequest("SSO is currently disabled.");
+    if (!SAMLResponse) throw AppError.badRequest("Missing SAMLResponse.");
+
+    const decoded = Buffer.from(SAMLResponse, "base64").toString("utf8");
+    const issuer = decoded
+      .match(/<(?:saml:)?Issuer[^>]*>([^<]+)<\/(?:saml:)?Issuer>/)?.[1]
+      ?.trim();
+    if (!issuer) throw AppError.badRequest("SAMLResponse has no Issuer.");
+    const provider = resolveSamlProviderByIssuer(config.providers.values(), issuer);
+    if (!provider || provider.type !== "saml") {
+      throw AppError.notFound(`No SAML provider for issuer "${issuer}".`);
+    }
+    providerId = provider.id;
+
+    // IdP-initiated gating: absence of InResponseTo => unsolicited (IdP-initiated).
+    const isSpInitiated = /InResponseTo="/.test(decoded);
+    if (!isSpInitiated && !provider.samlAllowIdpInitiated) {
+      throw AppError.badRequest("IdP-initiated SSO is disabled for this provider.");
+    }
+
+    const acsUrl = `${config.baseUrl}/auth/sso/saml/acs`;
+    const identity = await validateSamlResponse(provider, { SAMLResponse, RelayState }, acsUrl);
+
+    // Replay protection (post-validation): reject a reused assertion ID.
+    const assertionId = decoded.match(/<(?:saml:)?Assertion[^>]*\sID="([^"]+)"/)?.[1];
+    const notOnOrAfter = decoded.match(/NotOnOrAfter="([^"]+)"/)?.[1];
+    if (assertionId && notOnOrAfter && !markAssertionSeen(assertionId, new Date(notOnOrAfter))) {
+      throw AppError.unauthorized("This sign-in response was already used.");
+    }
+
+    // Redirect target from the VERIFIED RelayState (SP-initiated); default "/".
+    let redirect = "/";
+    if (RelayState) {
+      try {
+        redirect = safeRedirect((await verifyStatePayload(RelayState)).redirect);
+      } catch {
+        /* opaque IdP-initiated RelayState — keep default */
+      }
+    }
+
+    const result = await provisionSsoUser(
+      provider,
+      identity,
+      ipAddress,
+      c.req.header("User-Agent")
+    );
+    await createAuditLogWithContext(c, AUDIT_ACTIONS.SSO_LOGIN, result.user.id, {
+      details: { provider: providerId, binding: "saml" },
+      ipAddress,
+      status: "success",
+    });
+
+    const code = stashTokens(
+      { user: result.user, tokens: result.tokens, redirect },
+      60_000
+    );
+    return c.redirect(`/login/sso-complete?code=${encodeURIComponent(code)}`, 302);
+  } catch (error) {
+    const detail = describeSsoError(error);
+    await createAuditLogWithContext(c, AUDIT_ACTIONS.SSO_LOGIN_FAILED, undefined, {
+      details: { provider: providerId, ...detail },
+      ipAddress,
+      status: "failure",
+      errorMessage: error instanceof Error ? error.message : "SAML login failed",
+    });
+    requestLogger(c.get("requestId")).warn(
+      { module: "SSO", provider: providerId, ...detail },
+      "SAML ACS failed"
+    );
+    const msg =
+      error instanceof AppError
+        ? error.message
+        : "SSO sign-in failed. Please try again.";
+    return c.redirect("/login?ssoError=" + encodeURIComponent(msg), 302);
+  }
+});
+
+/**
+ * POST /rbac/auth/sso/saml/exchange — trade a one-time ACS handoff code for the
+ * minted session tokens. Single-use and short-lived; never returns tokens in a
+ * redirect URL.
+ */
+ssoRoutes.post(
+  "/saml/exchange",
+  zValidator("json", z.object({ code: z.string().min(1) })),
+  async (c) => {
+    const { code } = c.req.valid("json");
+    const payload = claimTokens(code);
+    if (!payload) throw AppError.unauthorized("Sign-in handoff expired. Please try again.");
+    return c.json({
+      success: true,
+      data: { user: payload.user, tokens: payload.tokens, redirect: payload.redirect },
+    });
+  }
+);
 
 export default ssoRoutes;

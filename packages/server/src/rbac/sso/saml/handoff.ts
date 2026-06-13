@@ -42,6 +42,12 @@ export function claimTokens(code: string, nowDate: Date = new Date()): HandoffPa
   return hit.payload;
 }
 
+/** Test-only: clear the handoff-code and replay caches. */
+export function resetHandoffState(): void {
+  codes.clear();
+  seen.clear();
+}
+
 /** True if the assertion id is fresh (and records it); false if already seen (replay). */
 export function markAssertionSeen(
   id: string,
