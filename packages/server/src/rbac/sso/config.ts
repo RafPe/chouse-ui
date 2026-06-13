@@ -26,6 +26,7 @@ const FIELD_SUFFIXES = [
   'CLAIM_MAPPING',
   'DISPLAY_NAME',
   'ROLE_MAPPING',
+  'AUTH_PARAMS',
   'CLIENT_ID',
   'ISSUER',
   'SCOPES',
@@ -52,6 +53,8 @@ const CommonProviderSchema = z.object({
   scopes: z.string().min(1),
   roleMappingClaim: z.string().optional(),
   roleMapping: z.record(z.string()).optional(),
+  // Extra params merged into the authorization request (e.g. prompt, hd, audience).
+  authParams: z.record(z.string()).optional(),
 });
 
 const OidcProviderSchema = CommonProviderSchema.extend({
@@ -101,6 +104,7 @@ const FIELD_TO_KEY: Record<string, string> = {
   CLAIM_MAPPING: 'claimMapping',
   ROLE_MAPPING_CLAIM: 'roleMappingClaim',
   ROLE_MAPPING: 'roleMapping',
+  AUTH_PARAMS: 'authParams',
 };
 
 export function loadSsoConfig(env: Record<string, string | undefined> = process.env): SsoConfig {
@@ -139,6 +143,7 @@ export function loadSsoConfig(env: Record<string, string | undefined> = process.
     if (typeof candidate.type === 'string') candidate.type = candidate.type.toLowerCase();
     if (typeof fields.claimMapping === 'string') candidate.claimMapping = parsePairs(fields.claimMapping);
     if (typeof fields.roleMapping === 'string') candidate.roleMapping = parsePairs(fields.roleMapping);
+    if (typeof fields.authParams === 'string') candidate.authParams = parsePairs(fields.authParams);
 
     const parsed = ProviderSchema.safeParse(candidate);
     if (!parsed.success) {
@@ -200,6 +205,7 @@ export async function buildSsoConfig(
       claimMapping: p.claimMapping ? parsePairs(p.claimMapping) : undefined,
       roleMappingClaim: p.roleMappingClaim ?? undefined,
       roleMapping: p.roleMapping ? parsePairs(p.roleMapping) : undefined,
+      authParams: p.authParams ? parsePairs(p.authParams) : undefined,
     };
     const parsed = ProviderSchema.safeParse(candidate);
     if (!parsed.success) {

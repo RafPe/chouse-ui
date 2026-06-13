@@ -124,6 +124,15 @@ describe('loadSsoConfig', () => {
     }
   });
 
+  it('parses auth_params into a record', () => {
+    const env = {
+      ...baseEnv(),
+      AUTH_SSO_PROVIDERS_OKTA_AUTH_PARAMS: 'hd:example.com,prompt:select_account',
+    };
+    const okta = loadSsoConfig(env).providers.get('okta')!;
+    expect(okta.authParams).toEqual({ hd: 'example.com', prompt: 'select_account' });
+  });
+
   it('parses role mapping into a record', () => {
     const env = {
       ...baseEnv(),

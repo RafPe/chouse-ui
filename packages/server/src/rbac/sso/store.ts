@@ -35,6 +35,7 @@ export interface DbSsoProvider {
   claimMapping: string | null;
   roleMappingClaim: string | null;
   roleMapping: string | null;
+  authParams: string | null;
   enabled: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -55,6 +56,7 @@ export interface ProviderInput {
   claimMapping?: string | null;
   roleMappingClaim?: string | null;
   roleMapping?: string | null;
+  authParams?: string | null;
   enabled?: boolean;
   createdBy?: string | null;
 }
@@ -134,6 +136,7 @@ export async function createDbProvider(input: ProviderInput): Promise<DbSsoProvi
     claimMapping: input.claimMapping ?? null,
     roleMappingClaim: input.roleMappingClaim ?? null,
     roleMapping: input.roleMapping ?? null,
+    authParams: input.authParams ?? null,
     enabled: input.enabled ?? true,
     createdAt: now,
     updatedAt: now,
@@ -151,7 +154,8 @@ export async function updateDbProvider(
   const schema = getSchema();
   const set: Record<string, unknown> = { updatedAt: new Date() };
   for (const k of ["type", "displayName", "issuer", "authorizationEndpoint", "tokenEndpoint",
-    "userinfoEndpoint", "clientId", "scopes", "claimMapping", "roleMappingClaim", "roleMapping", "enabled"] as const) {
+    "userinfoEndpoint", "clientId", "scopes", "claimMapping", "roleMappingClaim", "roleMapping",
+    "authParams", "enabled"] as const) {
     if (patch[k] !== undefined) set[k] = patch[k];
   }
   if (patch.clientSecret !== undefined) set.clientSecretEncrypted = encryptSecret(patch.clientSecret);
