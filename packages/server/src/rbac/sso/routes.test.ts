@@ -11,6 +11,8 @@ import { signStatePayload, SSO_STATE_COOKIE, SSO_STATE_TTL_SECONDS } from "./sta
 import type { SsoConfig, SsoProviderConfig } from "./config";
 import { makeSignedSamlResponse } from "./testFixtures/samlFixtures";
 import { stashTokens, resetHandoffState } from "./saml/handoff";
+import { resetSamlRequestCache, seedSamlRequestId } from "./saml/client";
+import { signStatePayload as signRelayState } from "./state";
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -941,9 +943,10 @@ describe("SAML routes", () => {
     mockExchangeCodeForIdentity.mockClear();
     mockProvisionSsoUser.mockClear();
     mockCreateAuditLogWithContext.mockClear();
-    // The handoff replay cache is module-level and shared across tests; fixtures
-    // reuse a fixed assertion ID, so reset it to keep each test independent.
+    // Module-level caches shared across tests; fixtures reuse a fixed assertion
+    // ID + request id, so reset all of them to keep each test independent.
     resetHandoffState();
+    resetSamlRequestCache();
     app = buildApp();
   });
 
@@ -951,9 +954,32 @@ describe("SAML routes", () => {
     mock.restore();
   });
 
+  // The ACS cookie name + relay-state audience are internal to routes.ts; mirror
+  // them here. The relay cookie value is the signed state JWT we POST as RelayState.
+  const SAML_RELAY_COOKIE = "chouse_saml_relay";
+
+  /**
+   * Build a browser-bound SP-initiated request: seed the request id node-saml
+   * would have issued at /start, and produce a matching RelayState JWT + cookie.
+   */
+  async function spInitiated(requestId: string, redirect = "/"): Promise<{
+    relayState: string;
+    cookie: string;
+  }> {
+    await seedSamlRequestId(requestId);
+    const relayState = await signRelayState({
+      provider: SAML_PROVIDER_ID,
+      state: "saml",
+      nonce: "saml",
+      codeVerifier: "saml",
+      redirect,
+    });
+    return { relayState, cookie: `${SAML_RELAY_COOKIE}=${relayState}` };
+  }
+
   // ── GET /:provider/start (SAML branch) ─────────────────────────────────────
 
-  it("GET /:provider/start redirects 302 to the IdP SSO URL with a SAMLRequest", async () => {
+  it("GET /:provider/start redirects 302 to the IdP SSO URL with a SAMLRequest + sets the relay cookie", async () => {
     const { idpCertPem } = await makeSignedSamlResponse({ inResponseTo: "_x" });
     mockGetSsoConfig.mockReturnValue(makeSamlConfig(idpCertPem));
 
@@ -963,22 +989,29 @@ describe("SAML routes", () => {
     const location = res.headers.get("Location") ?? "";
     expect(location.startsWith("https://idp.test/sso")).toBe(true);
     expect(location).toContain("SAMLRequest=");
+    // Browser-binding cookie is set, HttpOnly + Lax.
+    const setCookie = res.headers.get("Set-Cookie") ?? "";
+    expect(setCookie).toContain(`${SAML_RELAY_COOKIE}=`);
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("SameSite=Lax");
   });
 
   // ── POST /saml/acs ─────────────────────────────────────────────────────────
 
-  it("ACS happy path: valid SP-initiated assertion → 302 to /login/sso-complete?code=, provisions + audits", async () => {
-    const { samlResponseB64, idpCertPem } = await makeSignedSamlResponse({ inResponseTo: "_x" });
+  it("ACS happy path: SP-initiated assertion WITH matching cookie + RelayState → 302 sso-complete, provisions + audits", async () => {
+    const requestId = "_req-happy";
+    const { samlResponseB64, idpCertPem } = await makeSignedSamlResponse({ inResponseTo: requestId });
     mockGetSsoConfig.mockReturnValue(makeSamlConfig(idpCertPem));
     mockProvisionSsoUser.mockResolvedValue({
       user: { id: "user-saml", username: "alice" },
       tokens: { accessToken: "at-saml", refreshToken: "rt-saml" },
     });
+    const { relayState, cookie } = await spInitiated(requestId, "/dashboard");
 
     const res = await app.request("/sso/saml/acs", {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ SAMLResponse: samlResponseB64 }).toString(),
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookie },
+      body: new URLSearchParams({ SAMLResponse: samlResponseB64, RelayState: relayState }).toString(),
     });
 
     expect(res.status).toBe(302);
@@ -991,6 +1024,71 @@ describe("SAML routes", () => {
       "user-saml",
       expect.objectContaining({ status: "success" })
     );
+  });
+
+  it("ACS login-CSRF: valid SP-initiated response WITHOUT the binding cookie → rejected, no provisioning", async () => {
+    const requestId = "_req-csrf";
+    const { samlResponseB64, idpCertPem } = await makeSignedSamlResponse({ inResponseTo: requestId });
+    mockGetSsoConfig.mockReturnValue(makeSamlConfig(idpCertPem));
+    mockProvisionSsoUser.mockResolvedValue({
+      user: { id: "user-csrf", username: "victim" },
+      tokens: { accessToken: "at", refreshToken: "rt" },
+    });
+    // Attacker injects a validly-signed assertion + RelayState into the victim's
+    // browser, but the victim never ran /start → no binding cookie present.
+    const { relayState } = await spInitiated(requestId);
+
+    const res = await app.request("/sso/saml/acs", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ SAMLResponse: samlResponseB64, RelayState: relayState }).toString(),
+    });
+
+    expect(res.status).toBe(302);
+    expect((res.headers.get("Location") ?? "").startsWith("/login?ssoError=")).toBe(true);
+    expect(mockProvisionSsoUser).not.toHaveBeenCalled();
+  });
+
+  it("ACS forged InResponseTo IdP-bypass: signed response with an InResponseTo never issued → rejected (cache miss), no provisioning", async () => {
+    const { samlResponseB64, idpCertPem } = await makeSignedSamlResponse({
+      inResponseTo: "_req-forged-never-issued",
+    });
+    mockGetSsoConfig.mockReturnValue(makeSamlConfig(idpCertPem, { samlAllowIdpInitiated: false }));
+    mockProvisionSsoUser.mockResolvedValue({
+      user: { id: "user-forge", username: "x" },
+      tokens: { accessToken: "at", refreshToken: "rt" },
+    });
+    // Cache intentionally NOT seeded → node-saml's ifPresent check rejects the
+    // forged InResponseTo, so the attacker can't flip the IdP-initiated gate.
+
+    const res = await app.request("/sso/saml/acs", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ SAMLResponse: samlResponseB64 }).toString(),
+    });
+
+    expect(res.status).toBe(302);
+    expect((res.headers.get("Location") ?? "").startsWith("/login?ssoError=")).toBe(true);
+    expect(mockProvisionSsoUser).not.toHaveBeenCalled();
+  });
+
+  it("ACS IdP-initiated allowed: signed response with NO InResponseTo + no cookie → 302 sso-complete", async () => {
+    const { samlResponseB64, idpCertPem } = await makeSignedSamlResponse({});
+    mockGetSsoConfig.mockReturnValue(makeSamlConfig(idpCertPem, { samlAllowIdpInitiated: true }));
+    mockProvisionSsoUser.mockResolvedValue({
+      user: { id: "user-idp", username: "alice" },
+      tokens: { accessToken: "at-idp", refreshToken: "rt-idp" },
+    });
+
+    const res = await app.request("/sso/saml/acs", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ SAMLResponse: samlResponseB64 }).toString(),
+    });
+
+    expect(res.status).toBe(302);
+    expect((res.headers.get("Location") ?? "").startsWith("/login/sso-complete?code=")).toBe(true);
+    expect(mockProvisionSsoUser).toHaveBeenCalledTimes(1);
   });
 
   it("ACS IdP-initiated blocked when samlAllowIdpInitiated=false → 302 to /login?ssoError=, no provisioning", async () => {
@@ -1034,29 +1132,26 @@ describe("SAML routes", () => {
     expect(mockProvisionSsoUser).not.toHaveBeenCalled();
   });
 
-  it("ACS replay: same valid SAMLResponse twice → first succeeds, second rejected", async () => {
-    const { samlResponseB64, idpCertPem } = await makeSignedSamlResponse({ inResponseTo: "_x" });
+  it("ACS replay: same valid SP-initiated SAMLResponse twice → first succeeds, second rejected", async () => {
+    const requestId = "_req-replay";
+    const { samlResponseB64, idpCertPem } = await makeSignedSamlResponse({ inResponseTo: requestId });
     mockGetSsoConfig.mockReturnValue(makeSamlConfig(idpCertPem));
     mockProvisionSsoUser.mockResolvedValue({
       user: { id: "user-replay", username: "alice" },
       tokens: { accessToken: "at-r", refreshToken: "rt-r" },
     });
+    const { relayState, cookie } = await spInitiated(requestId);
+    const body = new URLSearchParams({ SAMLResponse: samlResponseB64, RelayState: relayState }).toString();
+    const headers = { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookie };
 
-    const body = new URLSearchParams({ SAMLResponse: samlResponseB64 }).toString();
-
-    const first = await app.request("/sso/saml/acs", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-    });
+    const first = await app.request("/sso/saml/acs", { method: "POST", headers, body });
     expect(first.status).toBe(302);
     expect((first.headers.get("Location") ?? "").startsWith("/login/sso-complete?code=")).toBe(true);
 
-    const second = await app.request("/sso/saml/acs", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-    });
+    // Re-seed the request id (node-saml consumed it on the first validate) so the
+    // second attempt fails on the REPLAY check, not the InResponseTo cache.
+    await seedSamlRequestId(requestId);
+    const second = await app.request("/sso/saml/acs", { method: "POST", headers, body });
     expect(second.status).toBe(302);
     expect((second.headers.get("Location") ?? "").startsWith("/login?ssoError=")).toBe(true);
   });

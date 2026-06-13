@@ -27,6 +27,15 @@ import { AppError } from "../../types";
 
 const ssoRoutes = new Hono();
 
+/**
+ * Browser-binding cookie for SP-initiated SAML. Set at /start to the RelayState
+ * (the signed state JWT), checked at the ACS so a signed Response can only be
+ * consumed by the browser that initiated the flow — closing login-CSRF /
+ * assertion injection. HttpOnly, one-time, 10-minute lifetime.
+ */
+const SAML_RELAY_COOKIE = "chouse_saml_relay";
+const SAML_RELAY_TTL_SECONDS = 600;
+
 const CallbackSchema = z.object({
   // Raw query string from the IdP redirect (code, state, iss, ...).
   // Forwarded verbatim because openid-client validates the full
@@ -95,6 +104,16 @@ ssoRoutes.get("/:provider/start", async (c) => {
     });
     try {
       const { url } = await buildSamlAuthnRequest(provider, acsUrl, relayState);
+      // Bind this browser to the flow: the ACS requires the POSTed RelayState to
+      // equal this cookie, so an attacker-supplied (validly-signed) assertion +
+      // RelayState injected into a victim's browser can't be consumed.
+      setCookie(c, SAML_RELAY_COOKIE, relayState, {
+        httpOnly: true,
+        secure: isProduction(),
+        sameSite: "Lax",
+        path: "/",
+        maxAge: SAML_RELAY_TTL_SECONDS,
+      });
       return c.redirect(url, 302);
     } catch (error) {
       requestLogger(c.get("requestId")).error(
@@ -270,10 +289,22 @@ ssoRoutes.post("/callback", zValidator("json", CallbackSchema), async (c) => {
  * A single endpoint for all SAML providers. The provider is resolved by the
  * assertion Issuer; node-saml then validates the signature against THAT
  * provider's certificate, so Issuer-based routing is safe (a forged Issuer
- * routes to a provider whose cert won't match → validation fails). Signature
- * validation runs BEFORE provisioning; the replay check runs AFTER validation
- * so only signature-valid assertions are recorded. Tokens never appear in the
- * redirect URL — only a one-time handoff code.
+ * routes to a provider whose cert won't match → validation fails). The Issuer
+ * regex here is for ROUTING ONLY — not a security boundary; node-saml
+ * re-validates the signature against the resolved provider's cert.
+ *
+ * Security ordering:
+ *  1. Signature + InResponseTo (against the shared request-ID cache) are
+ *     enforced inside node-saml BEFORE we trust any field.
+ *  2. SP-vs-IdP-initiated is decided from the VALIDATED profile.inResponseTo,
+ *     never from raw XML — a forged InResponseTo can't flip the gate (if
+ *     present, node-saml validated it against the cache and rejected a value we
+ *     never issued).
+ *  3. SP-initiated responses are bound to the browser that started the flow via
+ *     the SAML_RELAY_COOKIE (closes login-CSRF / assertion injection).
+ *  4. Replay check uses the VALIDATED assertion id and fails closed if absent.
+ *
+ * Tokens never appear in the redirect URL — only a one-time handoff code.
  */
 ssoRoutes.post("/saml/acs", async (c) => {
   const config = getSsoConfig();
@@ -281,11 +312,18 @@ ssoRoutes.post("/saml/acs", async (c) => {
   const form = await c.req.parseBody();
   const SAMLResponse = typeof form.SAMLResponse === "string" ? form.SAMLResponse : "";
   const RelayState = typeof form.RelayState === "string" ? form.RelayState : undefined;
+  // The browser-binding cookie set at /start. Always one-time: clear it below.
+  const relayCookie = getCookie(c, SAML_RELAY_COOKIE);
+  deleteCookie(c, SAML_RELAY_COOKIE, { path: "/" });
   let providerId = "unknown";
   try {
     if (!config.enabled) throw AppError.badRequest("SSO is currently disabled.");
     if (!SAMLResponse) throw AppError.badRequest("Missing SAMLResponse.");
 
+    // Issuer extraction is for ROUTING ONLY (pick the provider/cert) — NOT a
+    // security boundary. node-saml re-validates the signature against the
+    // resolved provider's certificate below; a forged Issuer routes to a cert
+    // that won't verify.
     const decoded = Buffer.from(SAMLResponse, "base64").toString("utf8");
     const issuer = decoded
       .match(/<(?:saml:)?Issuer[^>]*>([^<]+)<\/(?:saml:)?Issuer>/)?.[1]
@@ -297,20 +335,37 @@ ssoRoutes.post("/saml/acs", async (c) => {
     }
     providerId = provider.id;
 
-    // IdP-initiated gating: absence of InResponseTo => unsolicited (IdP-initiated).
-    const isSpInitiated = /InResponseTo="/.test(decoded);
+    const acsUrl = `${config.baseUrl}/auth/sso/saml/acs`;
+    // Signature + InResponseTo-against-cache enforced inside node-saml here.
+    const { identity, inResponseTo, assertionId, notOnOrAfter } =
+      await validateSamlResponse(provider, { SAMLResponse, RelayState }, acsUrl);
+
+    // Flow gating from VALIDATED data: a present InResponseTo means SP-initiated
+    // (and node-saml already proved it was a request id we issued).
+    const isSpInitiated = inResponseTo != null;
     if (!isSpInitiated && !provider.samlAllowIdpInitiated) {
       throw AppError.badRequest("IdP-initiated SSO is disabled for this provider.");
     }
 
-    const acsUrl = `${config.baseUrl}/auth/sso/saml/acs`;
-    const identity = await validateSamlResponse(provider, { SAMLResponse, RelayState }, acsUrl);
+    // Browser-binding check (SP-initiated only): the POSTed RelayState must be
+    // present AND equal the cookie set at /start. This binds the response to the
+    // browser that began the flow → closes login-CSRF / assertion injection.
+    // IdP-initiated flows have no /start, hence no cookie — they are gated solely
+    // by samlAllowIdpInitiated (documented accepted risk, off by default).
+    if (isSpInitiated) {
+      if (!RelayState || !relayCookie || RelayState !== relayCookie) {
+        throw AppError.unauthorized("Sign-in session is invalid. Please try again.");
+      }
+    }
 
-    // Replay protection (post-validation): reject a reused assertion ID.
-    const assertionId = decoded.match(/<(?:saml:)?Assertion[^>]*\sID="([^"]+)"/)?.[1];
-    const notOnOrAfter = decoded.match(/NotOnOrAfter="([^"]+)"/)?.[1];
-    if (assertionId && notOnOrAfter && !markAssertionSeen(assertionId, new Date(notOnOrAfter))) {
-      throw AppError.unauthorized("This sign-in response was already used.");
+    // Replay protection (post-validation) using the VALIDATED assertion id. Fail
+    // CLOSED if the validated assertion id is absent — never silently skip.
+    if (assertionId && notOnOrAfter) {
+      if (!markAssertionSeen(assertionId, notOnOrAfter)) {
+        throw AppError.unauthorized("This sign-in response was already used.");
+      }
+    } else {
+      throw AppError.unauthorized("Sign-in response missing a usable assertion id.");
     }
 
     // Redirect target from the VERIFIED RelayState (SP-initiated); default "/".

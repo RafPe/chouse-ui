@@ -1,11 +1,17 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, beforeEach } from "bun:test";
 import { makeSignedSamlResponse } from "../testFixtures/samlFixtures";
 import {
   validateSamlResponse,
   buildSamlAuthnRequest,
   resolveSamlProviderByIssuer,
+  resetSamlRequestCache,
+  seedSamlRequestId,
   type SamlProviderConfig,
 } from "./client";
+
+beforeEach(() => {
+  resetSamlRequestCache();
+});
 
 function provider(overrides: Partial<SamlProviderConfig> = {}): SamlProviderConfig {
   return {
@@ -32,15 +38,20 @@ describe("validateSamlResponse", () => {
     const { samlResponseB64, idpCertPem } = await makeSignedSamlResponse({
       attributes: { groups: ["ch-dev", "all"] },
     });
-    const id = await validateSamlResponse(
+    const { identity, inResponseTo, assertionId, notOnOrAfter } = await validateSamlResponse(
       provider({ samlIdpCertificate: idpCertPem }),
       { SAMLResponse: samlResponseB64 },
       ACS
     );
-    expect(id.subject).toBe("alice@corp.test");
-    expect(id.email).toBe("alice@corp.test");
-    expect(id.emailVerified).toBe(true);
-    expect(id.claims.groups).toEqual(["ch-dev", "all"]);
+    expect(identity.subject).toBe("alice@corp.test");
+    expect(identity.email).toBe("alice@corp.test");
+    expect(identity.emailVerified).toBe(true);
+    expect(identity.claims.groups).toEqual(["ch-dev", "all"]);
+    // No InResponseTo on this fixture → IdP-initiated shape.
+    expect(inResponseTo).toBeNull();
+    // assertionId + notOnOrAfter come from the VALIDATED assertion XML.
+    expect(assertionId).toBe("_assert1");
+    expect(notOnOrAfter).toBeInstanceOf(Date);
   });
 
   it("rejects a tampered assertion", async () => {
@@ -101,7 +112,7 @@ describe("validateSamlResponse", () => {
     const { samlResponseB64, idpCertPem } = await makeSignedSamlResponse({
       attributes: { mail: "a@b.co", uid: "alice", groups: "ch-dev" },
     });
-    const id = await validateSamlResponse(
+    const { identity } = await validateSamlResponse(
       provider({
         samlIdpCertificate: idpCertPem,
         claimMapping: { email: "mail", username: "uid" },
@@ -109,8 +120,64 @@ describe("validateSamlResponse", () => {
       { SAMLResponse: samlResponseB64 },
       ACS
     );
-    expect(id.email).toBe("a@b.co");
-    expect(id.username).toBe("alice");
+    expect(identity.email).toBe("a@b.co");
+    expect(identity.username).toBe("alice");
+  });
+
+  // ── InResponseTo enforcement against the shared request-ID cache ───────────
+
+  it("accepts an SP-initiated response whose InResponseTo matches a cached request id", async () => {
+    const requestId = "_req-cached-1";
+    const { samlResponseB64, idpCertPem } = await makeSignedSamlResponse({
+      inResponseTo: requestId,
+    });
+    // Mirror what /start does: stash the request id node-saml issued.
+    await seedSamlRequestId(requestId);
+
+    const { identity, inResponseTo } = await validateSamlResponse(
+      provider({ samlIdpCertificate: idpCertPem }),
+      { SAMLResponse: samlResponseB64 },
+      ACS
+    );
+    expect(identity.subject).toBe("alice@corp.test");
+    // The VALIDATED InResponseTo is surfaced for downstream flow-gating.
+    expect(inResponseTo).toBe(requestId);
+  });
+
+  it("rejects an SP-initiated response whose InResponseTo was never issued (cache miss)", async () => {
+    const { samlResponseB64, idpCertPem } = await makeSignedSamlResponse({
+      inResponseTo: "_req-never-issued",
+    });
+    // Cache intentionally empty → node-saml's ifPresent check must reject.
+    await expect(
+      validateSamlResponse(
+        provider({ samlIdpCertificate: idpCertPem }),
+        { SAMLResponse: samlResponseB64 },
+        ACS
+      )
+    ).rejects.toThrow();
+  });
+
+  it("rejects a response carrying more than one Assertion (signature-wrapping defence)", async () => {
+    const requestId = "_req-wrap-1";
+    const { samlResponseB64, idpCertPem } = await makeSignedSamlResponse({
+      inResponseTo: requestId,
+    });
+    await seedSamlRequestId(requestId);
+    // Inject a second, unsigned Assertion alongside the signed one.
+    const decoded = Buffer.from(samlResponseB64, "base64").toString("utf8");
+    const injected = decoded.replace(
+      "</samlp:Response>",
+      '<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_evil"><saml:Issuer>https://idp.test/entity</saml:Issuer></saml:Assertion></samlp:Response>'
+    );
+    const tampered = Buffer.from(injected).toString("base64");
+    await expect(
+      validateSamlResponse(
+        provider({ samlIdpCertificate: idpCertPem }),
+        { SAMLResponse: tampered },
+        ACS
+      )
+    ).rejects.toThrow();
   });
 });
 
