@@ -442,7 +442,11 @@ export async function extractRoleFromUser(
   if (!readonly) {
     const grantRole = grantRolesStatement([roleName], username, cluster);
     if (grantRole) statements.push(grantRole);
-    statements.push(defaultRoleStatement('ALL', username, cluster));
+    // Preserve the user's existing role assignments AND default-role policy;
+    // only ensure the new role is default so the migrated grants stay active.
+    const { defaultRoles } = await getUserRoles(service, username);
+    const nextDefault: DefaultRoles = defaultRoles === 'ALL' ? 'ALL' : [...new Set([...defaultRoles, roleName])];
+    statements.push(defaultRoleStatement(nextDefault, username, cluster));
     statements.push(...buildGrantDiffStatements(directGrants, [], { grantee: quoteIdent(username), cluster }));
   }
 

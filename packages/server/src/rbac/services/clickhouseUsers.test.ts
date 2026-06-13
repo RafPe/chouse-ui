@@ -157,6 +157,22 @@ describe('extractRoleFromUser', () => {
     expect(calls).toContain('GRANT SELECT ON `db`.* TO `extracted_alice`');
     expect(calls).toContain('GRANT `extracted_alice` TO `alice`');
     expect(calls).toContain('REVOKE SELECT ON `db`.* FROM `alice`');
+    // No prior roles / default ALL → new role becomes the default.
+    expect(calls).toContain('ALTER USER `alice` DEFAULT ROLE `extracted_alice`');
+  });
+
+  it('preserves existing roles and default-role policy when syncing a writable user', async () => {
+    const { service, calls } = mockService([
+      { match: /SELECT storage FROM system\.users WHERE name/, data: [{ storage: 'local directory' }] },
+      { match: /system\.role_grants WHERE user_name/, data: [{ granted_role_name: 'R1' }] },
+      { match: /default_roles_all, default_roles_list FROM system\.users WHERE name/, data: [{ default_roles_all: 0, default_roles_list: ['R1'] }] },
+      { match: /system\.grants\s+WHERE user_name/, data: [{ access_type: 'INSERT', database: 'db', table: null, column: null, is_partial_revoke: 0, grant_option: 0 }] },
+    ]);
+    await extractRoleFromUser(service, 'alice', 'alice_role');
+    // Existing role R1 is left assigned and kept in the default set; new role added.
+    expect(calls).toContain('ALTER USER `alice` DEFAULT ROLE `R1`, `alice_role`');
+    expect(calls.some((c) => c.includes('REVOKE `R1`'))).toBe(false);
+    expect(calls).toContain('GRANT `alice_role` TO `alice`');
   });
 
   it('throws when a read-only user has no direct grants', async () => {
