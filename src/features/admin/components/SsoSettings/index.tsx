@@ -158,6 +158,33 @@ function serializeRoleMapping(rows: RoleMappingRow[]): string {
     .join(",");
 }
 
+// ---- Generic key:value pairs (auth_params) ----
+interface KeyValueRow {
+  key: string;
+  value: string;
+}
+
+/** Parse "k:v,k2:v2" into editor rows. */
+function parseKeyValues(s: string | null | undefined): KeyValueRow[] {
+  if (!s) return [];
+  const rows: KeyValueRow[] = [];
+  for (const pair of s.split(",")) {
+    const t = pair.trim();
+    const idx = t.indexOf(":");
+    if (idx <= 0 || idx === t.length - 1) continue;
+    rows.push({ key: t.slice(0, idx).trim(), value: t.slice(idx + 1).trim() });
+  }
+  return rows;
+}
+
+/** Serialize key/value rows back to a "k:v,..." string. */
+function serializeKeyValues(rows: KeyValueRow[]): string {
+  return rows
+    .filter((r) => r.key.trim() && r.value.trim())
+    .map((r) => `${r.key.trim()}:${r.value.trim()}`)
+    .join(",");
+}
+
 // ============================================
 // Searchable role picker (Popover + Command combobox)
 // ============================================
@@ -293,6 +320,68 @@ function RoleMappingEditor({
           <Plus className="h-3 w-3" /> Add role mapping
         </Button>
       )}
+    </div>
+  );
+}
+
+// ============================================
+// Generic key/value editor (auth_params)
+// ============================================
+
+function KeyValueEditor({
+  rows,
+  onChange,
+  keyPlaceholder,
+  valuePlaceholder,
+}: {
+  rows: KeyValueRow[];
+  onChange: (rows: KeyValueRow[]) => void;
+  keyPlaceholder: string;
+  valuePlaceholder: string;
+}) {
+  const updateAt = (i: number, patch: Partial<KeyValueRow>) =>
+    onChange(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  const removeAt = (i: number) => onChange(rows.filter((_, idx) => idx !== i));
+  const add = () => onChange([...rows, { key: "", value: "" }]);
+
+  return (
+    <div className="space-y-2">
+      {rows.map((row, i) => (
+        <div key={i} className="flex items-center gap-1.5">
+          <Input
+            value={row.key}
+            onChange={(e) => updateAt(i, { key: e.target.value })}
+            placeholder={keyPlaceholder}
+            className={cn(INPUT_CLASS, "w-40 shrink-0")}
+          />
+          <span className="text-paper-faint">:</span>
+          <Input
+            value={row.value}
+            onChange={(e) => updateAt(i, { value: e.target.value })}
+            placeholder={valuePlaceholder}
+            className={cn(INPUT_CLASS, "flex-1")}
+          />
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            onClick={() => removeAt(i)}
+            className="h-7 w-7 shrink-0 rounded-xs text-red-400 hover:bg-red-950/40 hover:text-red-300"
+            aria-label="Remove parameter"
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      ))}
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        onClick={add}
+        className="h-7 gap-1 rounded-xs px-2 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-dim hover:bg-ink-100 hover:text-paper"
+      >
+        <Plus className="h-3 w-3" /> Add parameter
+      </Button>
     </div>
   );
 }
@@ -533,6 +622,7 @@ interface ProviderDraft {
   scopes: string;
   roleMappingClaim: string;
   roleMappingRows: RoleMappingRow[];
+  authParamsRows: KeyValueRow[];
 }
 
 function emptyDraft(): ProviderDraft {
@@ -551,6 +641,7 @@ function emptyDraft(): ProviderDraft {
     scopes: "openid profile email",
     roleMappingClaim: "",
     roleMappingRows: [],
+    authParamsRows: [],
   };
 }
 
@@ -570,6 +661,7 @@ function draftFromProvider(p: SsoAdminProvider): ProviderDraft {
     scopes: p.scopes ?? "openid profile email",
     roleMappingClaim: p.roleMappingClaim ?? "",
     roleMappingRows: parseRoleMapping(p.roleMapping),
+    authParamsRows: parseKeyValues(p.authParams),
   };
 }
 
@@ -604,10 +696,14 @@ function ProviderWizard({ open, onClose, editing }: ProviderWizardProps) {
     setStep(1);
     setTestResult(null);
     setSaveAnyway(false);
-    // Auto-expand Advanced when the provider already has overrides set.
+    // Auto-expand Advanced when the provider already has overrides / params set.
     setAdvancedOpen(
       Boolean(
-        next.authorizationEndpoint || next.tokenEndpoint || next.userinfoEndpoint || next.claimMapping
+        next.authorizationEndpoint ||
+          next.tokenEndpoint ||
+          next.userinfoEndpoint ||
+          next.claimMapping ||
+          next.authParamsRows.length > 0
       )
     );
   }, [open, editing]);
@@ -669,6 +765,8 @@ function ProviderWizard({ open, onClose, editing }: ProviderWizardProps) {
     if (draft.roleMappingClaim.trim()) payload.roleMappingClaim = draft.roleMappingClaim.trim();
     const roleMapping = serializeRoleMapping(draft.roleMappingRows);
     if (roleMapping) payload.roleMapping = roleMapping;
+    const authParams = serializeKeyValues(draft.authParamsRows);
+    if (authParams) payload.authParams = authParams;
     return payload;
   };
 
@@ -885,72 +983,20 @@ function ProviderWizard({ open, onClose, editing }: ProviderWizardProps) {
                   {draft.type === "oidc" ? "Issuer" : "Endpoints"}
                 </p>
                 {draft.type === "oidc" ? (
-                  <>
-                    <div className="space-y-1.5">
-                      <Label className={LABEL_CLASS}>Issuer URL</Label>
-                      <Input
-                        value={draft.issuer}
-                        onChange={(e) => update({ issuer: e.target.value })}
-                        placeholder="https://example.okta.com"
-                        className={cn(INPUT_CLASS, urlInvalid(draft.issuer) && "border-red-500/60")}
-                      />
-                      {urlInvalid(draft.issuer) ? (
-                        <p className="text-[11px] text-red-300">Enter a valid URL (https://…).</p>
-                      ) : (
-                        <p className={HELP_CLASS}>The OIDC discovery document is fetched from this issuer.</p>
-                      )}
-                    </div>
-
-                    {/* Advanced (optional) — override discovered endpoints / claims. */}
-                    <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-                      <CollapsibleTrigger className="flex w-full items-center gap-1.5 rounded-xs py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-dim hover:text-paper">
-                        <ChevronDown
-                          className={cn("h-3 w-3 transition-transform", advancedOpen && "rotate-180")}
-                        />
-                        Advanced (optional)
-                      </CollapsibleTrigger>
-                      <CollapsibleContent>
-                        <div className="space-y-3 pt-2">
-                          <p className={HELP_CLASS}>
-                            Leave blank to use OIDC discovery. Set these only to override a wrong or
-                            unreachable discovered value.
-                          </p>
-                          {(
-                            [
-                              ["Authorization endpoint", "authorizationEndpoint", "https://provider/oauth2/authorize"],
-                              ["Token endpoint", "tokenEndpoint", "https://provider/oauth2/token"],
-                              ["Userinfo endpoint", "userinfoEndpoint", "https://provider/oauth2/userinfo"],
-                            ] as const
-                          ).map(([label, key, placeholder]) => (
-                            <div key={key} className="space-y-1.5">
-                              <Label className={LABEL_CLASS}>{label}</Label>
-                              <Input
-                                value={draft[key]}
-                                onChange={(e) => update({ [key]: e.target.value })}
-                                placeholder={placeholder}
-                                className={cn(INPUT_CLASS, urlInvalid(draft[key]) && "border-red-500/60")}
-                              />
-                              {urlInvalid(draft[key]) && (
-                                <p className="text-[11px] text-red-300">Enter a valid URL (https://…).</p>
-                              )}
-                            </div>
-                          ))}
-                          <div className="space-y-1.5">
-                            <Label className={LABEL_CLASS}>Claim mapping</Label>
-                            <Input
-                              value={draft.claimMapping}
-                              onChange={(e) => update({ claimMapping: e.target.value })}
-                              placeholder="username:preferred_username,email:email"
-                              className={INPUT_CLASS}
-                            />
-                            <p className={HELP_CLASS}>
-                              Remap non-standard ID-token claims to subject / email / username.
-                            </p>
-                          </div>
-                        </div>
-                      </CollapsibleContent>
-                    </Collapsible>
-                  </>
+                  <div className="space-y-1.5">
+                    <Label className={LABEL_CLASS}>Issuer URL</Label>
+                    <Input
+                      value={draft.issuer}
+                      onChange={(e) => update({ issuer: e.target.value })}
+                      placeholder="https://example.okta.com"
+                      className={cn(INPUT_CLASS, urlInvalid(draft.issuer) && "border-red-500/60")}
+                    />
+                    {urlInvalid(draft.issuer) ? (
+                      <p className="text-[11px] text-red-300">Enter a valid URL (https://…).</p>
+                    ) : (
+                      <p className={HELP_CLASS}>The OIDC discovery document is fetched from this issuer.</p>
+                    )}
+                  </div>
                 ) : (
                   <>
                     {(
@@ -1001,6 +1047,77 @@ function ProviderWizard({ open, onClose, editing }: ProviderWizardProps) {
                     <p className={HELP_CLASS}>Map provider claims to user fields (key=value pairs).</p>
                   </div>
                 )}
+              </section>
+
+              {/* --- Advanced (optional): OIDC overrides + custom auth params --- */}
+              <section className="border-t border-ink-500 pt-4">
+                <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+                  <CollapsibleTrigger className="flex w-full items-center gap-1.5 rounded-xs py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-paper-dim hover:text-paper">
+                    <ChevronDown
+                      className={cn("h-3 w-3 transition-transform", advancedOpen && "rotate-180")}
+                    />
+                    Advanced (optional)
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <div className="space-y-5 pt-3">
+                      {draft.type === "oidc" && (
+                        <div className="space-y-3">
+                          <p className={HELP_CLASS}>
+                            Leave blank to use OIDC discovery. Set these only to override a wrong or
+                            unreachable discovered value, or to remap non-standard ID-token claims.
+                          </p>
+                          {(
+                            [
+                              ["Authorization endpoint", "authorizationEndpoint", "https://provider/oauth2/authorize"],
+                              ["Token endpoint", "tokenEndpoint", "https://provider/oauth2/token"],
+                              ["Userinfo endpoint", "userinfoEndpoint", "https://provider/oauth2/userinfo"],
+                            ] as const
+                          ).map(([label, key, placeholder]) => (
+                            <div key={key} className="space-y-1.5">
+                              <Label className={LABEL_CLASS}>{label}</Label>
+                              <Input
+                                value={draft[key]}
+                                onChange={(e) => update({ [key]: e.target.value })}
+                                placeholder={placeholder}
+                                className={cn(INPUT_CLASS, urlInvalid(draft[key]) && "border-red-500/60")}
+                              />
+                              {urlInvalid(draft[key]) && (
+                                <p className="text-[11px] text-red-300">Enter a valid URL (https://…).</p>
+                              )}
+                            </div>
+                          ))}
+                          <div className="space-y-1.5">
+                            <Label className={LABEL_CLASS}>Claim mapping</Label>
+                            <Input
+                              value={draft.claimMapping}
+                              onChange={(e) => update({ claimMapping: e.target.value })}
+                              placeholder="username:preferred_username,email:email"
+                              className={INPUT_CLASS}
+                            />
+                            <p className={HELP_CLASS}>
+                              Remap non-standard ID-token claims to subject / email / username.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Custom authorization params — both provider types. */}
+                      <div className="space-y-2">
+                        <Label className={LABEL_CLASS}>Authorization parameters</Label>
+                        <p className={HELP_CLASS}>
+                          Extra params added to the authorization request (e.g. prompt, login_hint, hd,
+                          audience). Reserved keys (state, nonce, redirect_uri…) are ignored.
+                        </p>
+                        <KeyValueEditor
+                          rows={draft.authParamsRows}
+                          onChange={(rows) => update({ authParamsRows: rows })}
+                          keyPlaceholder="prompt"
+                          valuePlaceholder="select_account"
+                        />
+                      </div>
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
               </section>
 
               {/* --- Role mapping (optional, bounded block) --- */}
