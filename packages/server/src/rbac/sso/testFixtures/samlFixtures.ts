@@ -48,17 +48,20 @@ export interface FixtureOpts {
   nameIdFormat?: string;
   attributes?: Record<string, string | string[]>;
   inResponseTo?: string; // omit for IdP-initiated
-  notOnOrAfter?: string; // ISO; default 2030-01-01T00:05:00Z
-  notBefore?: string; // ISO; default 2030-01-01T00:00:00Z
+  notOnOrAfter?: string; // ISO; default now + 5 min
+  notBefore?: string; // ISO; default now - 1 min
   sign?: boolean; // default true; false → unsigned (negative tests)
   tamperAfterSign?: boolean; // default false; flip a value to break the signature
 }
 
 export async function makeSignedSamlResponse(opts: FixtureOpts = {}): Promise<SamlFixture> {
   const { certPem, privateKeyPem } = await generateIdpKey();
-  const issueInstant = "2030-01-01T00:00:00.000Z";
-  const notBefore = opts.notBefore ?? issueInstant;
-  const notOnOrAfter = opts.notOnOrAfter ?? "2030-01-01T00:05:00.000Z";
+  // Default to a now-relative validity window so real-clock validation accepts
+  // an unmodified fixture. Callers can still force an expired/early window via
+  // opts.notBefore / opts.notOnOrAfter (negative tests).
+  const issueInstant = new Date().toISOString();
+  const notBefore = opts.notBefore ?? new Date(Date.now() - 60_000).toISOString();
+  const notOnOrAfter = opts.notOnOrAfter ?? new Date(Date.now() + 5 * 60_000).toISOString();
   const issuer = opts.issuer ?? "https://idp.test/entity";
   const audience = opts.audience ?? "https://app.test/sp";
   const recipient = opts.recipient ?? "https://app.test/auth/sso/saml/acs";
