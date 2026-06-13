@@ -124,6 +124,9 @@ const VERSION_CHECKS: Record<string, () => Promise<void>> = {
     expect(await h.columnIsNullable("rbac_sso_providers", "client_id")).toBe(true);
     expect(await h.columnIsNullable("rbac_sso_providers", "scopes")).toBe(true);
   },
+  "1.32.0": async () => {
+    expect(await h.columnExists("rbac_sso_providers", "saml_trust_email_verified")).toBe(true);
+  },
 };
 
 // ---------------------------------------------------------------------------

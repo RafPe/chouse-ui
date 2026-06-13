@@ -39,7 +39,7 @@ describe("validateSamlResponse", () => {
       attributes: { groups: ["ch-dev", "all"] },
     });
     const { identity, inResponseTo, assertionId, notOnOrAfter } = await validateSamlResponse(
-      provider({ samlIdpCertificate: idpCertPem }),
+      provider({ samlIdpCertificate: idpCertPem, samlTrustEmailVerified: true }),
       { SAMLResponse: samlResponseB64 },
       ACS
     );
@@ -52,6 +52,19 @@ describe("validateSamlResponse", () => {
     // assertionId + notOnOrAfter come from the VALIDATED assertion XML.
     expect(assertionId).toBe("_assert1");
     expect(notOnOrAfter).toBeInstanceOf(Date);
+  });
+
+  it("defaults emailVerified to false when samlTrustEmailVerified is not set", async () => {
+    const { samlResponseB64, idpCertPem } = await makeSignedSamlResponse({
+      attributes: { groups: ["ch-dev", "all"] },
+    });
+    const { identity } = await validateSamlResponse(
+      provider({ samlIdpCertificate: idpCertPem }),
+      { SAMLResponse: samlResponseB64 },
+      ACS
+    );
+    expect(identity.email).toBe("alice@corp.test");
+    expect(identity.emailVerified).toBe(false);
   });
 
   it("rejects a tampered assertion", async () => {

@@ -1658,6 +1658,7 @@ export interface SsoAdminProvider {
   samlSpEntityId?: string | null;
   samlNameIdFormat?: string | null;
   samlAllowIdpInitiated?: boolean | null;
+  samlTrustEmailVerified?: boolean | null;
   linkedUserCount?: number;
 }
 

@@ -44,7 +44,7 @@ export interface MigrationResult {
 // Current App Version
 // ============================================
 
-export const APP_VERSION = '1.31.0';
+export const APP_VERSION = '1.32.0';
 
 // ============================================
 // Error Helpers
@@ -3232,6 +3232,23 @@ export const MIGRATIONS: Migration[] = [
       logger.info({ module: 'RBAC', phase: 'migration' }, '[Migration 1.31.0] SAML columns + nullable relax');
     },
     down: async () => { /* forward-only; columns/relax left in place */ },
+  },
+  {
+    version: '1.32.0',
+    name: 'saml_trust_email_verified',
+    description: 'Add saml_trust_email_verified column to rbac_sso_providers',
+    up: async (db) => {
+      const dbType = getDatabaseType();
+      if (dbType === 'sqlite') {
+        try {
+          (db as SqliteDb).run(sql`ALTER TABLE rbac_sso_providers ADD COLUMN saml_trust_email_verified INTEGER`);
+        } catch (error: unknown) { if (!isDuplicateColumnError(error)) throw error; }
+      } else {
+        await (db as PostgresDb).execute(sql`ALTER TABLE rbac_sso_providers ADD COLUMN IF NOT EXISTS saml_trust_email_verified BOOLEAN`);
+      }
+      logger.info({ module: 'RBAC', phase: 'migration' }, '[Migration 1.32.0] Added saml_trust_email_verified');
+    },
+    down: async () => { /* forward-only */ },
   },
 ];
 

@@ -18,6 +18,7 @@ const PROVIDER_PREFIX = 'AUTH_SSO_PROVIDERS_';
 // Provider ids may themselves contain underscores, so we match the suffix
 // against this fixed list and treat the remainder as the provider id.
 const FIELD_SUFFIXES = [
+  'SAML_TRUST_EMAIL_VERIFIED',
   'SAML_ALLOW_IDP_INITIATED',
   'SAML_IDP_CERTIFICATE',
   'SAML_IDP_ENTITY_ID',
@@ -91,6 +92,7 @@ const SamlProviderSchema = z.object({
   samlSpEntityId: z.string().min(1),
   samlNameIdFormat: z.string().optional(),
   samlAllowIdpInitiated: z.boolean().optional(),
+  samlTrustEmailVerified: z.boolean().optional(),
   claimMapping: z.record(z.string()).optional(),
   roleMappingClaim: z.string().optional(),
   roleMapping: z.record(z.string()).optional(),
@@ -131,6 +133,7 @@ const FIELD_TO_KEY: Record<string, string> = {
   SAML_SP_ENTITY_ID: 'samlSpEntityId',
   SAML_NAMEID_FORMAT: 'samlNameIdFormat',
   SAML_ALLOW_IDP_INITIATED: 'samlAllowIdpInitiated',
+  SAML_TRUST_EMAIL_VERIFIED: 'samlTrustEmailVerified',
 };
 
 export function loadSsoConfig(env: Record<string, string | undefined> = process.env): SsoConfig {
@@ -171,6 +174,7 @@ export function loadSsoConfig(env: Record<string, string | undefined> = process.
     if (typeof fields.roleMapping === 'string') candidate.roleMapping = parsePairs(fields.roleMapping);
     if (typeof fields.authParams === 'string') candidate.authParams = parsePairs(fields.authParams);
     if (typeof fields.samlAllowIdpInitiated === 'string') candidate.samlAllowIdpInitiated = fields.samlAllowIdpInitiated.toLowerCase() === 'true';
+    if (typeof fields.samlTrustEmailVerified === 'string') candidate.samlTrustEmailVerified = fields.samlTrustEmailVerified.toLowerCase() === 'true';
     if (typeof fields.samlIdpCertificate === 'string') candidate.samlIdpCertificate = fields.samlIdpCertificate.replace(/\\n/g, '\n');
 
     const parsed = ProviderSchema.safeParse(candidate);
@@ -231,6 +235,7 @@ export async function buildSsoConfig(
         samlSpEntityId: (p.samlSpEntityId ?? '') || envCfg.baseUrl, // default SP entityID = base URL
         samlNameIdFormat: p.samlNameIdFormat ?? undefined,
         samlAllowIdpInitiated: p.samlAllowIdpInitiated ?? undefined,
+        samlTrustEmailVerified: p.samlTrustEmailVerified ?? undefined,
         claimMapping: p.claimMapping ? parsePairs(p.claimMapping) : undefined,
         roleMappingClaim: p.roleMappingClaim ?? undefined,
         roleMapping: p.roleMapping ? parsePairs(p.roleMapping) : undefined,

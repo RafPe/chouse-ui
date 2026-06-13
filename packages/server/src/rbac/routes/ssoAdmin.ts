@@ -57,6 +57,7 @@ const ProviderBody = z.object({
   samlSpEntityId: z.string().optional(),
   samlNameIdFormat: z.string().optional(),
   samlAllowIdpInitiated: z.boolean().optional(),
+  samlTrustEmailVerified: z.boolean().optional(),
   enabled: z.boolean().optional(),
 });
 

@@ -193,6 +193,7 @@ export const ssoProviders = pgTable('rbac_sso_providers', {
   samlSpEntityId: text('saml_sp_entity_id'),
   samlNameIdFormat: text('saml_nameid_format'),
   samlAllowIdpInitiated: boolean('saml_allow_idp_initiated'),
+  samlTrustEmailVerified: boolean('saml_trust_email_verified'),
   enabled: boolean('enabled').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

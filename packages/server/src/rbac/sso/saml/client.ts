@@ -33,6 +33,7 @@ export interface SamlProviderConfig {
   samlSpEntityId: string;
   samlNameIdFormat?: string;
   samlAllowIdpInitiated?: boolean;
+  samlTrustEmailVerified?: boolean;
   claimMapping?: Record<string, string>;
   roleMappingClaim?: string;
   roleMapping?: Record<string, string>;
@@ -213,7 +214,12 @@ export async function validateSamlResponse(
     provider: p.id,
     subject,
     email: email ? email.toLowerCase() : null,
-    emailVerified: true, // signed assertion from a trusted IdP — see design
+    // Opt-in per-provider trust (default false): only when the admin explicitly
+    // trusts this IdP to assert email truthfully do we treat the email as verified.
+    // When false, provisionSsoUser will NOT auto-link this SAML identity into an
+    // existing account by email (prevents account-takeover via a forged email);
+    // a brand-new SAML user is still JIT-created, so login keeps working.
+    emailVerified: p.samlTrustEmailVerified === true,
     username: username ? username.toLowerCase() : null,
     displayName: pick(m.displayName),
     claims: { ...claims, nameID },

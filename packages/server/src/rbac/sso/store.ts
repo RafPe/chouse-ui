@@ -42,6 +42,7 @@ export interface DbSsoProvider {
   samlSpEntityId: string | null;
   samlNameIdFormat: string | null;
   samlAllowIdpInitiated: boolean | null;
+  samlTrustEmailVerified: boolean | null;
   enabled: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -69,6 +70,7 @@ export interface ProviderInput {
   samlSpEntityId?: string | null;
   samlNameIdFormat?: string | null;
   samlAllowIdpInitiated?: boolean | null;
+  samlTrustEmailVerified?: boolean | null;
   enabled?: boolean;
   createdBy?: string | null;
 }
@@ -155,6 +157,7 @@ export async function createDbProvider(input: ProviderInput): Promise<DbSsoProvi
     samlSpEntityId: input.samlSpEntityId ?? null,
     samlNameIdFormat: input.samlNameIdFormat ?? null,
     samlAllowIdpInitiated: input.samlAllowIdpInitiated ?? null,
+    samlTrustEmailVerified: input.samlTrustEmailVerified ?? null,
     enabled: input.enabled ?? true,
     createdAt: now,
     updatedAt: now,
@@ -174,7 +177,7 @@ export async function updateDbProvider(
   for (const k of ["type", "displayName", "issuer", "authorizationEndpoint", "tokenEndpoint",
     "userinfoEndpoint", "clientId", "scopes", "claimMapping", "roleMappingClaim", "roleMapping",
     "authParams", "samlIdpEntityId", "samlIdpSsoUrl", "samlIdpCertificate", "samlSpEntityId",
-    "samlNameIdFormat", "samlAllowIdpInitiated", "enabled"] as const) {
+    "samlNameIdFormat", "samlAllowIdpInitiated", "samlTrustEmailVerified", "enabled"] as const) {
     if (patch[k] !== undefined) set[k] = patch[k];
   }
   if (patch.clientSecret !== undefined) {

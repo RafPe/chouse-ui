@@ -193,6 +193,7 @@ export const ssoProviders = sqliteTable('rbac_sso_providers', {
   samlSpEntityId: text('saml_sp_entity_id'),
   samlNameIdFormat: text('saml_nameid_format'),
   samlAllowIdpInitiated: integer('saml_allow_idp_initiated', { mode: 'boolean' }),
+  samlTrustEmailVerified: integer('saml_trust_email_verified', { mode: 'boolean' }),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
