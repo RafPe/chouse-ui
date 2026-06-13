@@ -7,3 +7,4 @@ type: minor
 
 ### Fixed
 - **SAML sign-in hardening** — SP-initiated SAML logins are now bound to the browser that started the flow and the `InResponseTo` request id is enforced against a shared cache, closing a login-CSRF / assertion-injection vector. IdP-vs-SP-initiated gating and replay protection now use node-saml's signature-validated profile/assertion instead of regex over raw response bytes, so a forged `InResponseTo` can no longer bypass the IdP-initiated toggle. Replay protection fails closed when an assertion id is missing.
+- **SSO account-takeover hardening** — the JIT-provisioning race handler no longer re-resolves a user by email on a unique-constraint collision; it fails closed unless a matching provider identity link exists. This prevents an unverified IdP-asserted email from being linked to a pre-existing local account, closing an account-takeover path that bypassed the verified-email auto-link gate.

@@ -131,21 +131,19 @@ export async function provisionSsoUser(
       );
     } catch (err) {
       if (!isUniqueError(err)) throw err;
-      // Race: another request created the same identity/user concurrently.
-      // Re-resolve via identity lookup first, then fall back to email.
+      // A genuine concurrent first-login race for this provider+subject will have
+      // created the identity link on the winning request, so re-resolve via that.
+      // A unique violation WITHOUT a matching identity means the email collided
+      // with a pre-existing foreign account — fail closed, never re-resolve by
+      // email (that would hand the caller the existing account's session).
       const raceIdentity = await getUserIdentity(provider.id, identity.subject);
-      if (raceIdentity) {
-        const rows = await db
-          .select()
-          .from(schema.users)
-          .where(eq(schema.users.id, raceIdentity.userId))
-          .limit(1);
-        user = rows[0] || null;
-      }
-      if (!user && identity.email) {
-        const byEmail = await getUserByEmail(identity.email);
-        user = byEmail ?? null;
-      }
+      if (!raceIdentity) throw err;
+      const rows = await db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.id, raceIdentity.userId))
+        .limit(1);
+      user = rows[0] || null;
       if (!user) throw err;
       logger.info(
         { module: 'SSO', provider: provider.id, userId: user.id },
