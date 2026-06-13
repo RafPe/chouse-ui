@@ -65,7 +65,7 @@ mock.module("../services/rbac", () => ({
 let mockTokenPayload = {
   sub: "admin-id",
   roles: ["super_admin"],
-  permissions: ["sso:view", "sso:manage"],
+  permissions: ["sso:view", "sso:edit", "sso:delete"],
   sessionId: "sess-1",
 };
 mock.module("../services/jwt", () => ({
@@ -139,7 +139,7 @@ describe("RBAC SSO Admin Routes", () => {
     mockTokenPayload = {
       sub: "admin-id",
       roles: ["super_admin"],
-      permissions: ["sso:view", "sso:manage"],
+      permissions: ["sso:view", "sso:edit", "sso:delete"],
       sessionId: "sess-1",
     };
   });
@@ -229,8 +229,8 @@ describe("RBAC SSO Admin Routes", () => {
       expect(mockUpsertDbSettings).toHaveBeenCalled();
     });
 
-    it("rejects without sso:manage", async () => {
-      // Token has sso:view but NOT sso:manage — fast-path check misses, falls
+    it("rejects without sso:edit", async () => {
+      // Token has sso:view but NOT sso:edit — fast-path check misses, falls
       // through to the DB check (userHasPermission) which is mocked to return
       // false, so requirePermission throws AppError.forbidden -> 403.
       mockTokenPayload.permissions = ["sso:view"];
@@ -355,6 +355,18 @@ describe("RBAC SSO Admin Routes", () => {
   });
 
   describe("DELETE /providers/:id", () => {
+    it("rejects with sso:edit but without sso:delete (distinct permission)", async () => {
+      // Editing and deleting are separate permissions; an edit-only token can't delete.
+      mockTokenPayload.permissions = ["sso:view", "sso:edit"];
+      mockGetDbProvider.mockResolvedValue(makeDbProvider());
+      const res = await app.request("/sso-admin/providers/okta", {
+        method: "DELETE",
+        headers: AUTH,
+      });
+      expect(res.status).toBe(403);
+      expect(mockDeleteDbProvider).not.toHaveBeenCalled();
+    });
+
     it("404s for an env provider", async () => {
       mockGetDbProvider.mockResolvedValue(null);
       const res = await app.request("/sso-admin/providers/google", {

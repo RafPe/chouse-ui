@@ -3007,7 +3007,7 @@ export const MIGRATIONS: Migration[] = [
   {
     version: '1.29.0',
     name: 'sso_admin_tables',
-    description: 'Add rbac_sso_settings + rbac_sso_providers; grant sso:view/sso:manage',
+    description: 'Add rbac_sso_settings + rbac_sso_providers; grant sso:view/sso:edit/sso:delete',
     up: async (db) => {
       const { getDatabaseType } = await import('./index');
       const { sql } = await import('drizzle-orm');
@@ -3081,14 +3081,16 @@ export const MIGRATIONS: Migration[] = [
       const { seedPermissions } = await import('../services/seed');
       const permissionIdMap = await seedPermissions();
       const ssoViewId = permissionIdMap.get('sso:view');
-      const ssoManageId = permissionIdMap.get('sso:manage');
+      const ssoEditId = permissionIdMap.get('sso:edit');
+      const ssoDeleteId = permissionIdMap.get('sso:delete');
       const { SYSTEM_ROLES } = await import('../schema/base');
       const { randomUUID } = await import('crypto');
 
-      // grant: super_admin -> [view, manage]; admin -> [view]
+      // grant: super_admin -> [view, edit, delete]; admin -> [view]
       const grants: Array<{ role: string; perm: string | undefined }> = [
         { role: SYSTEM_ROLES.SUPER_ADMIN, perm: ssoViewId },
-        { role: SYSTEM_ROLES.SUPER_ADMIN, perm: ssoManageId },
+        { role: SYSTEM_ROLES.SUPER_ADMIN, perm: ssoEditId },
+        { role: SYSTEM_ROLES.SUPER_ADMIN, perm: ssoDeleteId },
         { role: SYSTEM_ROLES.ADMIN, perm: ssoViewId },
       ];
       for (const { role, perm } of grants) {

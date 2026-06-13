@@ -136,7 +136,8 @@ export const PERMISSIONS = {
 
   // SSO Management
   SSO_VIEW: 'sso:view',
-  SSO_MANAGE: 'sso:manage',
+  SSO_EDIT: 'sso:edit',
+  SSO_DELETE: 'sso:delete',
 } as const;
 
 export type Permission = typeof PERMISSIONS[keyof typeof PERMISSIONS];

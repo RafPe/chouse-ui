@@ -127,7 +127,8 @@ const PERMISSION_CATEGORIES: Record<string, string[]> = {
   ],
   'SSO Management': [
     PERMISSIONS.SSO_VIEW,
-    PERMISSIONS.SSO_MANAGE,
+    PERMISSIONS.SSO_EDIT,
+    PERMISSIONS.SSO_DELETE,
   ],
 };
 
@@ -201,7 +202,8 @@ const PERMISSION_DISPLAY_NAMES: Record<string, string> = {
   [PERMISSIONS.AI_MODELS_UPDATE]: 'Update AI Models',
   [PERMISSIONS.AI_MODELS_DELETE]: 'Delete AI Models',
   [PERMISSIONS.SSO_VIEW]: 'View SSO Configuration',
-  [PERMISSIONS.SSO_MANAGE]: 'Manage SSO Configuration',
+  [PERMISSIONS.SSO_EDIT]: 'Edit SSO Configuration',
+  [PERMISSIONS.SSO_DELETE]: 'Delete SSO Providers',
 };
 
 // Role display names and descriptions

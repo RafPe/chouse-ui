@@ -5,7 +5,7 @@
  * and CRUD of OIDC/OAuth2 providers, coexisting with read-only env/YAML config
  * providers (source: 'config').
  *
- * - Settings panel: a compact form, edits gated on sso:manage.
+ * - Settings panel: a compact form, edits gated on sso:edit.
  * - Providers list: merged env + DB providers; env providers are read-only.
  * - Add/Edit provider: a 3-step modal wizard mirroring ConnectionManagement.
  *   Step 3 runs a live test; Save requires a passing test (with "Save anyway").
@@ -302,7 +302,7 @@ interface SettingsForm {
   autoLinkByEmail: boolean;
 }
 
-function SettingsPanel({ canManage }: { canManage: boolean }) {
+function SettingsPanel({ canEdit }: { canEdit: boolean }) {
   const queryClient = useQueryClient();
   const { data: settings, isLoading } = useQuery({
     queryKey: ["sso-settings"],
@@ -320,7 +320,7 @@ function SettingsPanel({ canManage }: { canManage: boolean }) {
   const hasProviders = (providers?.length ?? 0) > 0;
   // Settings defined by env/YAML config are read-only (mirrors config providers).
   const isConfigSourced = settings?.source === "config";
-  const canEdit = canManage && hasProviders && !isConfigSourced;
+  const editable = canEdit && hasProviders && !isConfigSourced;
 
   const [form, setForm] = useState<SettingsForm>({
     enabled: false,
@@ -401,7 +401,7 @@ function SettingsPanel({ canManage }: { canManage: boolean }) {
           <Switch
             checked={form.enabled}
             onCheckedChange={(v) => setForm((f) => ({ ...f, enabled: v }))}
-            disabled={!canEdit}
+            disabled={!editable}
           />
         </div>
 
@@ -423,7 +423,7 @@ function SettingsPanel({ canManage }: { canManage: boolean }) {
             onChange={(e) => setForm((f) => ({ ...f, baseUrl: e.target.value }))}
             placeholder="https://chouse.example.com"
             className={cn(INPUT_CLASS, urlInvalid(form.baseUrl) && "border-red-500/60")}
-            disabled={!canEdit}
+            disabled={!editable}
           />
           {urlInvalid(form.baseUrl) ? (
             <p className="text-[11px] text-red-300">Enter a valid URL (https://…).</p>
@@ -441,7 +441,7 @@ function SettingsPanel({ canManage }: { canManage: boolean }) {
           <Select
             value={form.defaultRole}
             onValueChange={(v) => setForm((f) => ({ ...f, defaultRole: v }))}
-            disabled={!canEdit}
+            disabled={!editable}
           >
             <SelectTrigger className={INPUT_CLASS}>
               <SelectValue placeholder="Select a role" />
@@ -473,11 +473,11 @@ function SettingsPanel({ canManage }: { canManage: boolean }) {
           <Switch
             checked={form.autoLinkByEmail}
             onCheckedChange={(v) => setForm((f) => ({ ...f, autoLinkByEmail: v }))}
-            disabled={!canEdit}
+            disabled={!editable}
           />
         </div>
 
-        {canManage && !hasProviders && (
+        {canEdit && !hasProviders && (
           <div className="flex items-center gap-2 rounded-xs border border-amber-900/60 bg-amber-950/30 px-3 py-2.5">
             <AlertCircle className="h-4 w-4 shrink-0 text-amber-300" />
             <p className="text-[12px] text-amber-200">
@@ -486,7 +486,7 @@ function SettingsPanel({ canManage }: { canManage: boolean }) {
           </div>
         )}
 
-        {canEdit && (
+        {editable && (
           <div className="flex justify-end border-t border-ink-500 pt-4">
             <Button
               onClick={() => saveMutation.mutate()}
@@ -1097,7 +1097,7 @@ function ProviderWizard({ open, onClose, editing }: ProviderWizardProps) {
 // Providers list
 // ============================================
 
-function ProvidersPanel({ canManage }: { canManage: boolean }) {
+function ProvidersPanel({ canEdit, canDelete }: { canEdit: boolean; canDelete: boolean }) {
   const queryClient = useQueryClient();
   const { data: providers, isLoading } = useQuery({
     queryKey: ["sso-admin-providers"],
@@ -1153,7 +1153,7 @@ function ProvidersPanel({ canManage }: { canManage: boolean }) {
       <div className="flex items-center gap-2 border-b border-ink-500 px-4 py-3">
         <KeyRound className="h-3.5 w-3.5 text-paper-dim" aria-hidden />
         <h3 className="font-mono text-[11px] uppercase tracking-[0.14em] text-paper">Providers</h3>
-        {canManage && (
+        {canEdit && (
           <Button
             size="sm"
             onClick={openCreate}
@@ -1228,7 +1228,7 @@ function ProvidersPanel({ canManage }: { canManage: boolean }) {
                       </span>
                     </span>
 
-                    {canManage && !isConfig && (
+                    {(canEdit || canDelete) && !isConfig && (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button
@@ -1241,40 +1241,48 @@ function ProvidersPanel({ canManage }: { canManage: boolean }) {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="rounded-xs border-ink-500 bg-ink-100 text-paper">
-                          {provider.enabled ? (
-                            <DropdownMenuItem
-                              onClick={() => setToDisable(provider)}
-                              className="cursor-pointer text-amber-300 focus:bg-amber-950/40 focus:text-amber-200"
-                            >
-                              <PowerOff className="mr-2 h-3.5 w-3.5" />
-                              Disable
-                            </DropdownMenuItem>
-                          ) : (
-                            <DropdownMenuItem
-                              onClick={() => toggleMutation.mutate({ id: provider.id, enabled: true })}
-                              disabled={toggleMutation.isPending}
-                              className="cursor-pointer text-emerald-300 focus:bg-emerald-950/40 focus:text-emerald-200"
-                            >
-                              <Power className="mr-2 h-3.5 w-3.5" />
-                              Enable
-                            </DropdownMenuItem>
+                          {canEdit && (
+                            <>
+                              {provider.enabled ? (
+                                <DropdownMenuItem
+                                  onClick={() => setToDisable(provider)}
+                                  className="cursor-pointer text-amber-300 focus:bg-amber-950/40 focus:text-amber-200"
+                                >
+                                  <PowerOff className="mr-2 h-3.5 w-3.5" />
+                                  Disable
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem
+                                  onClick={() => toggleMutation.mutate({ id: provider.id, enabled: true })}
+                                  disabled={toggleMutation.isPending}
+                                  className="cursor-pointer text-emerald-300 focus:bg-emerald-950/40 focus:text-emerald-200"
+                                >
+                                  <Power className="mr-2 h-3.5 w-3.5" />
+                                  Enable
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuSeparator className="bg-ink-500" />
+                              <DropdownMenuItem
+                                onClick={() => openEdit(provider)}
+                                className="cursor-pointer focus:bg-ink-200"
+                              >
+                                <Pencil className="mr-2 h-3.5 w-3.5" />
+                                Edit
+                              </DropdownMenuItem>
+                            </>
                           )}
-                          <DropdownMenuSeparator className="bg-ink-500" />
-                          <DropdownMenuItem
-                            onClick={() => openEdit(provider)}
-                            className="cursor-pointer focus:bg-ink-200"
-                          >
-                            <Pencil className="mr-2 h-3.5 w-3.5" />
-                            Edit
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator className="bg-ink-500" />
-                          <DropdownMenuItem
-                            onClick={() => setToDelete(provider)}
-                            className="cursor-pointer text-red-400 hover:bg-red-950/40 focus:bg-red-950/40 focus:text-red-300"
-                          >
-                            <Trash2 className="mr-2 h-3.5 w-3.5" />
-                            Delete
-                          </DropdownMenuItem>
+                          {canDelete && (
+                            <>
+                              {canEdit && <DropdownMenuSeparator className="bg-ink-500" />}
+                              <DropdownMenuItem
+                                onClick={() => setToDelete(provider)}
+                                className="cursor-pointer text-red-400 hover:bg-red-950/40 focus:bg-red-950/40 focus:text-red-300"
+                              >
+                                <Trash2 className="mr-2 h-3.5 w-3.5" />
+                                Delete
+                              </DropdownMenuItem>
+                            </>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     )}
@@ -1387,7 +1395,8 @@ function ProvidersPanel({ canManage }: { canManage: boolean }) {
 
 const SsoSettings: React.FC = () => {
   const { hasPermission } = useRbacStore();
-  const canManage = hasPermission(RBAC_PERMISSIONS.SSO_MANAGE);
+  const canEdit = hasPermission(RBAC_PERMISSIONS.SSO_EDIT);
+  const canDelete = hasPermission(RBAC_PERMISSIONS.SSO_DELETE);
 
   return (
     <div className="space-y-4 p-4">
@@ -1401,8 +1410,8 @@ const SsoSettings: React.FC = () => {
         </p>
       </div>
 
-      <SettingsPanel canManage={canManage} />
-      <ProvidersPanel canManage={canManage} />
+      <SettingsPanel canEdit={canEdit} />
+      <ProvidersPanel canEdit={canEdit} canDelete={canDelete} />
     </div>
   );
 };

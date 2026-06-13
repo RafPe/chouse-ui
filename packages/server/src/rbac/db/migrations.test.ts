@@ -104,9 +104,11 @@ const VERSION_CHECKS: Record<string, () => Promise<void>> = {
     expect(await h.tableExists("rbac_sso_settings")).toBe(true);
     expect(await h.tableExists("rbac_sso_providers")).toBe(true);
     expect(await h.permissionExists("sso:view")).toBe(true);
-    expect(await h.permissionExists("sso:manage")).toBe(true);
+    expect(await h.permissionExists("sso:edit")).toBe(true);
+    expect(await h.permissionExists("sso:delete")).toBe(true);
     expect(await h.roleHasPermission("super_admin", "sso:view")).toBe(true);
-    expect(await h.roleHasPermission("super_admin", "sso:manage")).toBe(true);
+    expect(await h.roleHasPermission("super_admin", "sso:edit")).toBe(true);
+    expect(await h.roleHasPermission("super_admin", "sso:delete")).toBe(true);
     expect(await h.roleHasPermission("admin", "sso:view")).toBe(true);
   },
 };

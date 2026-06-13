@@ -100,7 +100,7 @@ ssoAdminRoutes.get("/settings", requirePermission(PERMISSIONS.SSO_VIEW), async (
 
 ssoAdminRoutes.put(
   "/settings",
-  requirePermission(PERMISSIONS.SSO_MANAGE),
+  requirePermission(PERMISSIONS.SSO_EDIT),
   zValidator("json", SettingsBody),
   async (c) => {
     const input = c.req.valid("json");
@@ -152,7 +152,7 @@ ssoAdminRoutes.get("/providers", requirePermission(PERMISSIONS.SSO_VIEW), async 
 
 ssoAdminRoutes.post(
   "/providers",
-  requirePermission(PERMISSIONS.SSO_MANAGE),
+  requirePermission(PERMISSIONS.SSO_EDIT),
   zValidator("json", ProviderBody),
   async (c) => {
     const input = c.req.valid("json");
@@ -181,7 +181,7 @@ ssoAdminRoutes.post(
 
 ssoAdminRoutes.patch(
   "/providers/:id",
-  requirePermission(PERMISSIONS.SSO_MANAGE),
+  requirePermission(PERMISSIONS.SSO_EDIT),
   zValidator("json", ProviderBody.partial().omit({ id: true })),
   async (c) => {
     const id = c.req.param("id");
@@ -207,7 +207,7 @@ ssoAdminRoutes.patch(
   }
 );
 
-ssoAdminRoutes.delete("/providers/:id", requirePermission(PERMISSIONS.SSO_MANAGE), async (c) => {
+ssoAdminRoutes.delete("/providers/:id", requirePermission(PERMISSIONS.SSO_DELETE), async (c) => {
   const id = c.req.param("id");
   const user = getRbacUser(c);
   const ip = getClientIp(c);
@@ -240,7 +240,7 @@ ssoAdminRoutes.delete("/providers/:id", requirePermission(PERMISSIONS.SSO_MANAGE
 
 ssoAdminRoutes.post(
   "/providers/test",
-  requirePermission(PERMISSIONS.SSO_MANAGE),
+  requirePermission(PERMISSIONS.SSO_EDIT),
   zValidator("json", TestBody),
   async (c) => {
     const input = c.req.valid("json");
