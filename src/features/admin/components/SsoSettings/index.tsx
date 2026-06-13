@@ -37,6 +37,7 @@ import {
   MoreVertical,
   Power,
   PowerOff,
+  Copy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { log } from "@/lib/log";
@@ -129,6 +130,46 @@ function isValidUrl(value: string): boolean {
 /** True when a field has content but is not a valid URL (for inline errors). */
 function urlInvalid(value: string): boolean {
   return value.trim().length > 0 && !isValidUrl(value);
+}
+
+/**
+ * A read-only value shown as monospaced text with a copy-to-clipboard button
+ * (Copy → Check feedback, like a code block). Used for the SP details an admin
+ * must paste into their IdP.
+ */
+function CopyableValue({ value, label }: { value: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+    } catch (error) {
+      log.error("Clipboard copy failed", error);
+      toast.error("Couldn't copy to clipboard");
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <code className="min-w-0 flex-1 break-all font-mono text-[11px] text-paper-muted">{value}</code>
+      <Button
+        type="button"
+        size="icon"
+        variant="ghost"
+        onClick={onCopy}
+        aria-label={copied ? "Copied" : `Copy ${label ?? "value"}`}
+        className="h-6 w-6 shrink-0 rounded-xs text-paper-dim hover:bg-ink-300 hover:text-paper"
+      >
+        {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+      </Button>
+    </div>
+  );
 }
 
 // ---- Role mapping (claim value → role) ----
@@ -1168,9 +1209,7 @@ function ProviderWizard({ open, onClose, editing }: ProviderWizardProps) {
                     <div className="space-y-1.5">
                       <Label className={LABEL_CLASS}>ACS URL (Assertion Consumer Service)</Label>
                       {acsUrl ? (
-                        <code className="block break-all font-mono text-[11px] text-paper-muted">
-                          {acsUrl}
-                        </code>
+                        <CopyableValue value={acsUrl} label="ACS URL" />
                       ) : (
                         <p className="flex items-center gap-1.5 text-[11px] text-amber-300">
                           <AlertCircle className="h-3 w-3 shrink-0" />
@@ -1180,9 +1219,11 @@ function ProviderWizard({ open, onClose, editing }: ProviderWizardProps) {
                     </div>
                     <div className="space-y-1.5">
                       <Label className={LABEL_CLASS}>SP entityID</Label>
-                      <code className="block break-all font-mono text-[11px] text-paper-muted">
-                        {effectiveSpEntityId || "—"}
-                      </code>
+                      {effectiveSpEntityId ? (
+                        <CopyableValue value={effectiveSpEntityId} label="SP entityID" />
+                      ) : (
+                        <code className="block break-all font-mono text-[11px] text-paper-muted">—</code>
+                      )}
                     </div>
                   </div>
                 </>
