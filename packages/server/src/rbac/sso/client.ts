@@ -7,6 +7,20 @@
 
 import * as oidc from "openid-client";
 import type { SsoProviderConfig } from "./config";
+import { logger } from "../../utils/logger";
+
+// Authorization-request params the app controls — never overridable via auth_params.
+const RESERVED_AUTH_PARAMS = new Set([
+  "redirect_uri",
+  "scope",
+  "state",
+  "nonce",
+  "response_type",
+  "client_id",
+  "client_secret",
+  "code_challenge",
+  "code_challenge_method",
+]);
 
 export interface SsoIdentity {
   provider: string;
@@ -88,6 +102,21 @@ export async function buildAuthorizationRedirect(
     code_challenge_method: "S256",
   };
   if (p.type === "oidc") params.nonce = nonce;
+
+  // Merge admin-configured extra params (prompt, hd, audience, …). Reserved keys
+  // the app controls are dropped so they can't be hijacked.
+  if (p.authParams) {
+    for (const [key, value] of Object.entries(p.authParams)) {
+      if (RESERVED_AUTH_PARAMS.has(key)) {
+        logger.warn(
+          { module: "SSO", provider: p.id, param: key },
+          "Ignoring reserved key in auth_params"
+        );
+        continue;
+      }
+      params[key] = value;
+    }
+  }
 
   const url = oidc.buildAuthorizationUrl(cfg, params);
   return { url: url.toString(), state, nonce, codeVerifier };

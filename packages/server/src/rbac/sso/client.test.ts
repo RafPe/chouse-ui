@@ -61,6 +61,41 @@ describe("applyClaimMapping", () => {
   });
 });
 
+describe("buildAuthorizationRedirect auth_params", () => {
+  beforeEach(async () => {
+    const { resetProviderConfigurationCache } = await import("./client");
+    resetProviderConfigurationCache();
+  });
+
+  it("merges custom auth_params but ignores reserved keys", async () => {
+    const { buildAuthorizationRedirect } = await import("./client");
+    const result = await buildAuthorizationRedirect(
+      {
+        id: "gh-params",
+        type: "oauth2" as const,
+        displayName: "GitHub",
+        clientId: "client-id",
+        clientSecret: "client-secret",
+        scopes: "read:user",
+        authorizationEndpoint: "https://github.com/login/oauth/authorize",
+        tokenEndpoint: "https://github.com/login/oauth/access_token",
+        userinfoEndpoint: "https://api.github.com/user",
+        claimMapping: { subject: "id", email: "email", username: "login" },
+        authParams: { prompt: "consent", audience: "https://api.acme", state: "evil", scope: "hacked" },
+      },
+      "https://app.example.com/callback"
+    );
+    const url = new URL(result.url);
+    // Custom params pass through…
+    expect(url.searchParams.get("prompt")).toBe("consent");
+    expect(url.searchParams.get("audience")).toBe("https://api.acme");
+    // …but reserved keys are NOT overridable.
+    expect(url.searchParams.get("state")).toBe(result.state);
+    expect(url.searchParams.get("state")).not.toBe("evil");
+    expect(url.searchParams.get("scope")).toBe("read:user");
+  });
+});
+
 describe("buildAuthorizationRedirect (oauth2, real openid-client)", () => {
   beforeEach(async () => {
     const { resetProviderConfigurationCache } = await import("./client");
