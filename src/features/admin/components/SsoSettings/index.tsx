@@ -387,6 +387,67 @@ function KeyValueEditor({
 }
 
 // ============================================
+// Tag/chip input for space-separated tokens (scopes)
+// ============================================
+
+function ScopesInput({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  const [tok, setTok] = useState("");
+  const tokens = value.split(/\s+/).filter(Boolean);
+
+  const commit = (raw: string) => {
+    const next = raw.trim();
+    setTok("");
+    if (!next || tokens.includes(next)) return;
+    onChange([...tokens, next].join(" "));
+  };
+  const removeAt = (i: number) => onChange(tokens.filter((_, idx) => idx !== i).join(" "));
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 rounded-xs border border-ink-500 bg-ink-200 px-2 py-1.5 focus-within:border-brand">
+      {tokens.map((t, i) => (
+        <span
+          key={t}
+          className="inline-flex items-center gap-1 rounded-xs border border-ink-500 bg-ink-100 px-1.5 py-0.5 font-mono text-[11px] text-paper"
+        >
+          {t}
+          <button
+            type="button"
+            onClick={() => removeAt(i)}
+            aria-label={`Remove ${t}`}
+            className="text-paper-faint hover:text-red-300"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </span>
+      ))}
+      <input
+        value={tok}
+        onChange={(e) => setTok(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " " || e.key === ",") {
+            e.preventDefault();
+            commit(tok);
+          } else if (e.key === "Backspace" && tok === "" && tokens.length > 0) {
+            removeAt(tokens.length - 1);
+          }
+        }}
+        onBlur={() => commit(tok)}
+        placeholder={tokens.length === 0 ? placeholder : ""}
+        className="min-w-[7rem] flex-1 bg-transparent font-mono text-[12px] text-paper placeholder:text-paper-faint focus:outline-none"
+      />
+    </div>
+  );
+}
+
+// ============================================
 // Settings panel
 // ============================================
 
@@ -1032,13 +1093,14 @@ function ProviderWizard({ open, onClose, editing }: ProviderWizardProps) {
               <section className="space-y-3 border-t border-ink-500 pt-4">
                 <div className="space-y-1.5">
                   <Label className={LABEL_CLASS}>Scopes</Label>
-                  <Input
+                  <ScopesInput
                     value={draft.scopes}
-                    onChange={(e) => update({ scopes: e.target.value })}
+                    onChange={(scopes) => update({ scopes })}
                     placeholder="openid profile email"
-                    className={INPUT_CLASS}
                   />
-                  <p className={HELP_CLASS}>Space-separated scopes requested from the provider.</p>
+                  <p className={HELP_CLASS}>
+                    Type a scope and press Enter or space to add it as a tag.
+                  </p>
                 </div>
                 {draft.type === "oauth2" && (
                   <div className="space-y-1.5">
