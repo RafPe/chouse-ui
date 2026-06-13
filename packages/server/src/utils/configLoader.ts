@@ -58,6 +58,18 @@ function loadConfig() {
                 process.env[key] = value;
             }
 
+            // The logger captured LOG_LEVEL at import time — BEFORE this YAML was
+            // injected (configLoader imports logger). Reconcile now so a
+            // YAML-provided `log_level` actually takes effect.
+            const yamlLevel = process.env.LOG_LEVEL;
+            if (
+                yamlLevel &&
+                ["trace", "debug", "info", "warn", "error", "fatal"].includes(yamlLevel) &&
+                logger.level !== yamlLevel
+            ) {
+                logger.level = yamlLevel;
+            }
+
             logger.info({ configPath }, "Loaded configuration from file");
         } else {
             logger.error({ configPath }, "Invalid configuration format; expected YAML object");
