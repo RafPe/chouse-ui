@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v3.3.0] - 2026-06-14
+
+### Added
+- **SSO sign-in audit coverage** — first-time SSO sign-ins now record their outcome in the audit log: `sso.user_provision` when an account is just-in-time created, and `sso.identity_link` when an SSO identity is auto-linked to an existing user by verified email. These are written alongside the existing `auth.sso_login` entry, so JIT provisioning and account linking are no longer invisible to auditors.
+- **Native ClickHouse role management** — a new "ClickHouse roles" admin tab to create and edit native ClickHouse roles (`CREATE ROLE` + `GRANT`) with a full privilege editor covering database/table/global scope, column-level grants and `WITH GRANT OPTION`. Edits are reconciled diff-based, issuing only the `GRANT`/`REVOKE` statements that changed.
+- **Role assignment for ClickHouse users** — users are now created/edited by assigning native roles and default roles (plus optional direct grants), reading state directly from ClickHouse `system.*` tables.
+- **Extract to role** — turn a legacy user's direct grants into a reusable role and re-point the user at it in one action.
+- **Manage SSO in Admin** — a new Admin → SSO section to edit global SSO settings (enabled, base URL, default role, auto-link) and add/edit/delete OIDC and OAuth2 providers, coexisting with read-only env/YAML providers. Adding a provider runs a live test before save; deleting one force-unlinks all linked users (with a clear warning) and is fully audited. Gated by new granular permissions — `sso:view` (admin), `sso:edit`, and `sso:delete` (super admin). Client secrets are encrypted at rest and never returned.
+- **SSO advanced provider options** — OIDC providers can now override individual discovered endpoints and remap non-standard ID-token claims, and any provider can send custom authorization-request parameters (e.g. `prompt`, `login_hint`, `hd`, `audience`); reserved keys are ignored. Configurable from the wizard's Advanced section and via `auth_params` in YAML/env.
+- **SAML 2.0 SSO** — add SAML providers alongside OIDC/OAuth2, supporting both SP-initiated and IdP-initiated login with mandatory signed-assertion verification, InResponseTo/replay protection, browser-bound RelayState, SAML-attribute → role mapping, JIT provisioning, and IdP-metadata paste in the admin wizard. Auto-linking a SAML sign-in to an existing account by email is opt-in per provider (off by default) via a "trust IdP-asserted email" toggle. Configurable in Admin → Security → SSO or via `AUTH_SSO_PROVIDERS_<id>_SAML_*` env/YAML.
+- **Enable/disable ClickHouse roles** — a reversible alternative to deleting. Disabling a role stashes its grants and revokes them in ClickHouse (the role stays defined and assigned, but grants nothing); enabling restores them exactly. Backed by a new `rbac_clickhouse_role_state` table, scoped per connection. Disabled roles are flagged in the list, and editing is locked until re-enabled.
+
+### Changed
+- **ClickHouse user management reworked** — the previous fixed `developer`/`analyst`/`viewer` model (which wrote grants directly to users and cached them locally) is replaced; ClickHouse is now the source of truth. New `clickhouse:roles:*` permissions gate the role UI and are granted automatically to roles that already manage ClickHouse users.
+- **SSO provider brand icons** — enabled SSO providers now show a recognisable brand logo (Google, Microsoft, Okta, GitHub, GitLab, Apple, Slack, AWS, Auth0, …) inferred automatically from the provider, falling back to a generic glyph for unrecognised providers. Icons adapt to light/dark themes and appear on the login page, the admin SSO providers list, and each user's linked SSO identities.
+- **Login page SSO** — providers render as compact labelled buttons with their brand icon; when more than three are enabled the extras collapse behind a "Show more" toggle so the password form stays in view.
+- **Admin → SSO** — the Single sign-on section now has a proper titled header, and the "Global settings" / "Providers" sub-sections use distinct, meaningful icons.
+- **Explorer → Create Database** — the dialog now follows the same editorial layout as Create Table / Alter Table: themed `ink/paper` window surface, an icon + mono eyebrow title, mono-uppercase field labels, and a brand-coloured primary action, instead of the previous off-style card.
+- **Explorer → Import data (upload file)** — replaced the hardcoded emerald accent with the app's `brand` theme token across the dropzone, progress, step dots, buttons, and selects so the wizard matches the rest of the UI in both light and dark themes.
+
+### Fixed
+- **SAML sign-in hardening** — SP-initiated SAML logins are now bound to the browser that started the flow and the `InResponseTo` request id is enforced against a shared cache, closing a login-CSRF / assertion-injection vector. IdP-vs-SP-initiated gating and replay protection now use node-saml's signature-validated profile/assertion instead of regex over raw response bytes, so a forged `InResponseTo` can no longer bypass the IdP-initiated toggle. Replay protection fails closed when an assertion id is missing.
+- **SSO account-takeover hardening** — the JIT-provisioning race handler no longer re-resolves a user by email on a unique-constraint collision; it fails closed unless a matching provider identity link exists. This prevents an unverified IdP-asserted email from being linked to a pre-existing local account, closing an account-takeover path that bypassed the verified-email auto-link gate.
+
+### Removed
+- **Legacy ClickHouse user metadata cache** — the `rbac_clickhouse_users_metadata` table is dropped; user/role/grant state is read live from ClickHouse.
+
 ## [v3.2.0] - 2026-06-13
 
 ### Changed
@@ -121,27 +148,4 @@ UI consistency fixes across Fleet Doctor, Preferences, and Admin Roles.
 
 - **Fleet poller enabled by default** — the background snapshot poller now starts automatically without requiring `FLEET_POLLER_ENABLED=true`; set `FLEET_POLLER_ENABLED=false` to opt out (e.g. in test environments)
 - **Preferences Appearance card** — redesigned from a narrow single-column vertical list to a full-width `grid-cols-4` horizontal card layout with larger icons and centered alignment
-
-## [v2.17.1] - 2026-06-07
-
-Documentation and developer experience overhaul. No app code changes.
-
-### Added
-
-- **CLAUDE.md** — project-level instructions for AI agents: key commands, tech stack, code standards summary, and a condition-based rule routing table (`when to apply each rule`)
-- **`.rules/DEAD_CODE.md`** — new rule file guiding agents on how to identify and safely remove unused imports, symbols, exports, and dependencies — both after making changes and during proactive scans
-
-### Changed
-
-- **README** condensed (~26% shorter): removed redundant overview note, replaced four environment variable tables with a short list + `.env.example` pointer, condensed the migrations section, removed the "For AI Agents" section (superseded by `CLAUDE.md`). **Built With** section rewritten to accurately reflect all dependencies (added React Router, Pino, jose, Vercel AI SDK, node-sql-parser, TanStack Table/Virtual, Recharts, uPlot, React Hook Form, Framer Motion, cmdk, DOMPurify, Radix UI; organized into Runtime/Server, Frontend, and ClickHouse sections)
-- **`.rules/CODE_CHANGES.md`** condensed (~61% shorter): removed redundant code examples, kept one example per pattern, added dead-code scan and changelog update to pre-commit checklist
-- **`.rules/CODE_REVIEWER.md`** condensed (~73% shorter): restructured as a checklist-focused format with cross-references to `CODE_CHANGES.md` instead of duplicating examples
-- **`CONTRIBUTING.md`** updated: "Using AI Tools" section now points to `CLAUDE.md` as the primary quick reference; removed the Screenshots documentation subsection
-- **GitHub Pages workflow** (`github-pages.yml`): removed the "Sync Screenshots" step
-
-### Removed
-
-- **`ARCHITECTURE.md`** — 673-line architecture reference removed; key patterns summarised inline in `CLAUDE.md`
-- **`.rules/ARCHITECTURE.md`** — rule file for maintaining `ARCHITECTURE.md`, no longer needed
-- **Screenshots** — 8 product screenshots removed from the repo (`public/screenshots/`), `docs/portfolio` screenshot gallery component (`ScreenshotGallery.tsx`), and the portfolio `sync-screenshots` build script
 
