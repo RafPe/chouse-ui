@@ -559,4 +559,32 @@ describe("provisionSsoUser", () => {
     expect(result).toEqual(mockCreateSessionResult);
     expect(getUserIdentityCallCount).toBe(2);
   });
+
+  // ----------------------------------------------------------------
+  // Test 14: SECURITY — unverified email collides with a pre-existing foreign
+  // account (no identity created). Must fail closed, never re-resolve by email.
+  // ----------------------------------------------------------------
+  it("14. JIT unique violation with NO matching identity (foreign email collision) → throws, no session, no email re-resolve", async () => {
+    // A local account already owns this email — getUserByEmail would resolve to it.
+    mockGetUserByEmailResult = existingUserRow;
+    mockGetUserByUsernameResults.set("alice", null);
+
+    // createUser collides on the existing account's unique email.
+    mockFns.createUser.mockImplementation(async () => {
+      throw new Error("UNIQUE constraint failed: rbac_users.email");
+    });
+
+    // No identity is ever found: attacker's first login, no link was created.
+    mockFns.getUserIdentity.mockImplementation(async () => null);
+
+    // Attacker-controlled, UNVERIFIED email matching the victim's account.
+    const identity = makeIdentity({ emailVerified: false });
+    await expect(provisionSsoUser(makeProvider(), identity)).rejects.toThrow();
+
+    // No session was minted for the victim's account …
+    expect(mockFns.createSessionAndTokens).not.toHaveBeenCalled();
+    // … and the email-based re-resolution path is gone (step 2 skipped it for
+    // the unverified email; the catch must not call it either).
+    expect(mockFns.getUserByEmail).not.toHaveBeenCalled();
+  });
 });

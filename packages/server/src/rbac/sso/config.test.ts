@@ -1,5 +1,53 @@
-import { describe, it, expect } from 'bun:test';
-import { loadSsoConfig } from './config';
+import { describe, it, expect, mock } from 'bun:test';
+import { loadSsoConfig, buildSsoConfig } from './config';
+
+// Mock the DB store so buildSsoConfig's dynamic import of './store' resolves
+// to a fixed set of DB providers (no real database). 'okta' collides with the
+// env provider (env must win); 'google' is DB-only.
+mock.module('./store', () => ({
+  getDbSettings: async () => null,
+  listDbProviders: async () => [
+    {
+      id: 'okta',
+      type: 'oidc',
+      displayName: 'Okta (DB)',
+      issuer: 'https://db.okta.com',
+      authorizationEndpoint: null,
+      tokenEndpoint: null,
+      userinfoEndpoint: null,
+      clientId: 'db-cid',
+      clientSecretEncrypted: 'enc:sek',
+      scopes: 'openid',
+      claimMapping: null,
+      roleMappingClaim: null,
+      roleMapping: null,
+      enabled: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      createdBy: null,
+    },
+    {
+      id: 'google',
+      type: 'oidc',
+      displayName: 'Google',
+      issuer: 'https://accounts.google.com',
+      authorizationEndpoint: null,
+      tokenEndpoint: null,
+      userinfoEndpoint: null,
+      clientId: 'g-cid',
+      clientSecretEncrypted: 'enc:sek',
+      scopes: 'openid email',
+      claimMapping: null,
+      roleMappingClaim: null,
+      roleMapping: null,
+      enabled: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      createdBy: null,
+    },
+  ],
+  decryptProviderSecret: () => 'sek',
+}));
 
 function baseEnv(): Record<string, string> {
   return {
@@ -36,6 +84,24 @@ describe('loadSsoConfig', () => {
     if (okta!.type === 'oidc') expect(okta!.issuer).toBe('https://corp.okta.com');
   });
 
+  it('keeps OIDC endpoint overrides and claim mapping (not stripped)', () => {
+    const env = {
+      ...baseEnv(),
+      AUTH_SSO_PROVIDERS_OKTA_AUTHORIZATION_ENDPOINT: 'https://corp.okta.com/oauth2/v1/authorize',
+      AUTH_SSO_PROVIDERS_OKTA_TOKEN_ENDPOINT: 'https://corp.okta.com/oauth2/v1/token',
+      AUTH_SSO_PROVIDERS_OKTA_USERINFO_ENDPOINT: 'https://corp.okta.com/oauth2/v1/userinfo',
+      AUTH_SSO_PROVIDERS_OKTA_CLAIM_MAPPING: 'username:upn,email:mail',
+    };
+    const okta = loadSsoConfig(env).providers.get('okta')!;
+    expect(okta.type).toBe('oidc');
+    if (okta.type === 'oidc') {
+      expect(okta.authorizationEndpoint).toBe('https://corp.okta.com/oauth2/v1/authorize');
+      expect(okta.tokenEndpoint).toBe('https://corp.okta.com/oauth2/v1/token');
+      expect(okta.userinfoEndpoint).toBe('https://corp.okta.com/oauth2/v1/userinfo');
+      expect(okta.claimMapping).toEqual({ username: 'upn', email: 'mail' });
+    }
+  });
+
   it('parses an oauth2 provider with claim mapping', () => {
     const env = {
       ...baseEnv(),
@@ -56,6 +122,15 @@ describe('loadSsoConfig', () => {
     if (gh!.type === 'oauth2') {
       expect(gh!.claimMapping).toEqual({ subject: 'id', email: 'email', username: 'login' });
     }
+  });
+
+  it('parses auth_params into a record', () => {
+    const env = {
+      ...baseEnv(),
+      AUTH_SSO_PROVIDERS_OKTA_AUTH_PARAMS: 'hd:example.com,prompt:select_account',
+    };
+    const okta = loadSsoConfig(env).providers.get('okta')!;
+    expect(okta.authParams).toEqual({ hd: 'example.com', prompt: 'select_account' });
   });
 
   it('parses role mapping into a record', () => {
@@ -104,5 +179,49 @@ describe('loadSsoConfig', () => {
   it('accepts uppercase provider type values', () => {
     const env = { ...baseEnv(), AUTH_SSO_PROVIDERS_OKTA_TYPE: 'OIDC' };
     expect(loadSsoConfig(env).providers.get('okta')!.type).toBe('oidc');
+  });
+});
+
+describe('SAML provider', () => {
+  it('parses a saml env provider', () => {
+    const env = {
+      ...baseEnv(),
+      AUTH_SSO_PROVIDERS_OKTA_TYPE: 'saml',
+      AUTH_SSO_PROVIDERS_OKTA_DISPLAY_NAME: 'Okta SAML',
+      AUTH_SSO_PROVIDERS_OKTA_SAML_IDP_ENTITY_ID: 'https://idp.test/entity',
+      AUTH_SSO_PROVIDERS_OKTA_SAML_IDP_SSO_URL: 'https://idp.test/sso',
+      AUTH_SSO_PROVIDERS_OKTA_SAML_IDP_CERTIFICATE: 'PEMDATA',
+      AUTH_SSO_PROVIDERS_OKTA_SAML_SP_ENTITY_ID: 'https://app.test/sp',
+      AUTH_SSO_PROVIDERS_OKTA_SAML_ALLOW_IDP_INITIATED: 'true',
+    } as Record<string, string | undefined>;
+    // baseEnv defines OKTA as oidc — remove the oidc-only keys so the id is unambiguously SAML
+    delete env.AUTH_SSO_PROVIDERS_OKTA_ISSUER;
+    delete env.AUTH_SSO_PROVIDERS_OKTA_CLIENT_ID;
+    delete env.AUTH_SSO_PROVIDERS_OKTA_CLIENT_SECRET;
+    delete env.AUTH_SSO_PROVIDERS_OKTA_SCOPES;
+    const p = loadSsoConfig(env as Record<string, string>).providers.get('okta')!;
+    expect(p.type).toBe('saml');
+    if (p.type === 'saml') {
+      expect(p.samlIdpEntityId).toBe('https://idp.test/entity');
+      expect(p.samlSpEntityId).toBe('https://app.test/sp');
+      expect(p.samlAllowIdpInitiated).toBe(true);
+    }
+  });
+});
+
+describe('buildSsoConfig', () => {
+  it('merges env + DB providers, env wins on id, tags source', async () => {
+    const cfg = await buildSsoConfig(baseEnv());
+
+    // env-only provider keeps source 'config'
+    expect(cfg.providers.get('okta')!.source).toBe('config');
+    // env wins on id conflict: issuer is the env value, not the DB one
+    const okta = cfg.providers.get('okta')!;
+    expect(okta.type).toBe('oidc');
+    if (okta.type === 'oidc') expect(okta.issuer).toBe('https://corp.okta.com');
+    expect(okta.displayName).toBe('Okta');
+
+    // DB-only provider is merged with source 'database'
+    expect(cfg.providers.get('google')!.source).toBe('database');
   });
 });

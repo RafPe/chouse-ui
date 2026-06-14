@@ -19,6 +19,7 @@ import aiProvidersRoutes from './aiProviders';
 import aiModelsRoutes from './aiModels';
 import aiConfigsRoutes from './aiConfigs';
 import ssoRoutes from '../sso/routes';
+import ssoAdminRoutes from './ssoAdmin';
 
 const rbacRoutes = new Hono();
 
@@ -37,6 +38,7 @@ rbacRoutes.route('/user-preferences', userPreferencesRoutes);
 rbacRoutes.route('/ai-providers', aiProvidersRoutes);
 rbacRoutes.route('/ai-base-models', aiModelsRoutes);
 rbacRoutes.route('/ai-models', aiConfigsRoutes);
+rbacRoutes.route('/sso-admin', ssoAdminRoutes);
 
 // Health check for RBAC system
 rbacRoutes.get('/health', async (c) => {

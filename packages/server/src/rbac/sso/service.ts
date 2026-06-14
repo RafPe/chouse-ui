@@ -41,6 +41,16 @@ export async function provisionSsoUser(
   const db = getDatabase() as AnyDb;
   const schema = getSchema();
 
+  // Troubleshooting aid: the FULL decoded token the IdP returned — OIDC ID-token
+  // claims, or the OAuth2 userinfo response. Off unless LOG_LEVEL=debug. WARNING:
+  // this includes PII (email, name, groups, …); enable only while diagnosing, and
+  // never raise it to info/warn. It is the decoded claim set, not the signed JWT
+  // or any access token.
+  logger.debug(
+    { module: 'SSO', provider: provider.id, subject: identity.subject, claims: identity.claims },
+    'IdP token claims (full, debug only)'
+  );
+
   let user: User | null = null;
 
   // 1. Existing identity link
@@ -121,21 +131,19 @@ export async function provisionSsoUser(
       );
     } catch (err) {
       if (!isUniqueError(err)) throw err;
-      // Race: another request created the same identity/user concurrently.
-      // Re-resolve via identity lookup first, then fall back to email.
+      // A genuine concurrent first-login race for this provider+subject will have
+      // created the identity link on the winning request, so re-resolve via that.
+      // A unique violation WITHOUT a matching identity means the email collided
+      // with a pre-existing foreign account — fail closed, never re-resolve by
+      // email (that would hand the caller the existing account's session).
       const raceIdentity = await getUserIdentity(provider.id, identity.subject);
-      if (raceIdentity) {
-        const rows = await db
-          .select()
-          .from(schema.users)
-          .where(eq(schema.users.id, raceIdentity.userId))
-          .limit(1);
-        user = rows[0] || null;
-      }
-      if (!user && identity.email) {
-        const byEmail = await getUserByEmail(identity.email);
-        user = byEmail ?? null;
-      }
+      if (!raceIdentity) throw err;
+      const rows = await db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.id, raceIdentity.userId))
+        .limit(1);
+      user = rows[0] || null;
       if (!user) throw err;
       logger.info(
         { module: 'SSO', provider: provider.id, userId: user.id },
@@ -203,6 +211,22 @@ async function syncMappedRoles(
       ? [raw]
       : [];
 
+  // Inspection aid: shows whether the configured claim arrived (and under which
+  // key) and what raw value it carried. Enable with LOG_LEVEL=debug. Logs claim
+  // KEYS + the mapped claim's value only — not the full token (avoids PII/leaks).
+  logger.debug(
+    {
+      module: 'SSO',
+      provider: provider.id,
+      claimName,
+      availableClaimKeys: Object.keys(claims),
+      rawClaim: raw,
+      extractedValues: values,
+      mappingKeys: Object.keys(mapping),
+    },
+    'Role mapping — inspecting IdP claim'
+  );
+
   const targetRoleNames = [...new Set(values.map((v) => mapping[v]).filter(Boolean))];
   const targetRoles = (
     await Promise.all(targetRoleNames.map((n) => getRoleByName(n)))
@@ -210,7 +234,15 @@ async function syncMappedRoles(
 
   if (targetRoles.length === 0) {
     logger.warn(
-      { module: 'SSO', provider: provider.id, userId, claimValues: values },
+      {
+        module: 'SSO',
+        provider: provider.id,
+        userId,
+        claimName,
+        claimValues: values,
+        availableClaimKeys: Object.keys(claims),
+        mappingKeys: Object.keys(mapping),
+      },
       'Role mapping produced no known roles; keeping existing roles'
     );
     return;

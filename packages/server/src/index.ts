@@ -4,6 +4,7 @@ import { serve } from "bun";
 import { serveStatic } from "hono/bun";
 import api from "./routes";
 import { corsMiddleware } from "./middleware/cors";
+import { samlAcsHandler, SAML_ACS_PATH } from "./rbac/sso/routes";
 import { rateLimiter } from "hono-rate-limiter";
 import { errorHandler, notFoundHandler } from "./middleware/error";
 import { cleanupExpiredSessions, getSessionCount } from "./services/clickhouse";
@@ -245,6 +246,12 @@ app.use('/api/*', rateLimiter({
 
 app.route("/api", api);
 
+// SAML Assertion Consumer Service at a clean top-level URL. The IdP POSTs the
+// signed assertion here (cross-site form POST), so it's exposed off /api at the
+// path admins register with their IdP. POST-only — a GET (e.g. the OIDC callback
+// SPA route) is unaffected and still falls through to static serving below.
+app.post(SAML_ACS_PATH, samlAcsHandler);
+
 // ============================================
 // Static File Serving
 // ============================================
@@ -305,9 +312,9 @@ initializeRbac().then(async () => {
   // at boot rather than lazily on the first login request. Isolated so an SSO
   // misconfiguration can't take down the rest of startup.
   try {
-    const { getSsoConfig } = await import("./rbac/sso/config");
-    const ssoConfig = getSsoConfig();
-    if (!ssoConfig.enabled) {
+    const { refreshSsoConfig, getSsoConfig } = await import("./rbac/sso/config");
+    await refreshSsoConfig();
+    if (!getSsoConfig().enabled) {
       logger.info({ module: "SSO" }, "SSO disabled");
     }
   } catch (error) {

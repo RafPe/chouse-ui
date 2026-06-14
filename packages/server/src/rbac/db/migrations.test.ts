@@ -116,6 +116,33 @@ const VERSION_CHECKS: Record<string, () => Promise<void>> = {
     expect(await h.tableExists("rbac_clickhouse_role_state")).toBe(true);
     expect(await h.indexExists("ch_role_state_conn_role_idx")).toBe(true);
   },
+  "1.32.0": async () => {
+    expect(await h.tableExists("rbac_sso_settings")).toBe(true);
+    expect(await h.tableExists("rbac_sso_providers")).toBe(true);
+    expect(await h.permissionExists("sso:view")).toBe(true);
+    expect(await h.permissionExists("sso:edit")).toBe(true);
+    expect(await h.permissionExists("sso:delete")).toBe(true);
+    expect(await h.roleHasPermission("super_admin", "sso:view")).toBe(true);
+    expect(await h.roleHasPermission("super_admin", "sso:edit")).toBe(true);
+    expect(await h.roleHasPermission("super_admin", "sso:delete")).toBe(true);
+    expect(await h.roleHasPermission("admin", "sso:view")).toBe(true);
+  },
+  "1.33.0": async () => {
+    expect(await h.columnExists("rbac_sso_providers", "auth_params")).toBe(true);
+  },
+  "1.34.0": async () => {
+    for (const col of [
+      "saml_idp_entity_id", "saml_idp_sso_url", "saml_idp_certificate",
+      "saml_sp_entity_id", "saml_nameid_format", "saml_allow_idp_initiated",
+    ]) {
+      expect(await h.columnExists("rbac_sso_providers", col)).toBe(true);
+    }
+    expect(await h.columnIsNullable("rbac_sso_providers", "client_id")).toBe(true);
+    expect(await h.columnIsNullable("rbac_sso_providers", "scopes")).toBe(true);
+  },
+  "1.35.0": async () => {
+    expect(await h.columnExists("rbac_sso_providers", "saml_trust_email_verified")).toBe(true);
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -372,6 +399,64 @@ for (const dialect of DIALECTS) {
       const result = await runMigrations({ skipSeed: true });
       expect(result.migrationsApplied).toEqual([]);
       expect(await h.rowCount("rbac_data_access_policies")).toBe(before);
+    });
+  });
+
+  describe(`migrations · 1.34.0 sso provider rebuild [${dialect}]`, () => {
+    // 1.34.0 rebuilds rbac_sso_providers on SQLite (CREATE __new -> INSERT…SELECT ->
+    // DROP -> RENAME), which MOVES rows. Prove a pre-existing OIDC provider survives
+    // the rebuild intact, the new SAML columns are NULL, and re-running is a no-op.
+    const provId = randomUUID();
+
+    beforeAll(async () => {
+      await h.freshDatabase(dialect, pg);
+      // State BEFORE the SAML migration (rbac_sso_providers exists, pre-1.34.0 shape).
+      await runMigrations({ skipSeed: true, through: "1.33.0" });
+
+      await h.rawRun(sql`INSERT INTO rbac_sso_providers
+        (id, type, display_name, issuer, client_id, client_secret_encrypted, scopes, enabled, created_at, updated_at)
+        VALUES (${provId}, 'oidc', 'Acme OIDC', 'https://idp.acme.test', 'acme-client', 'enc:secret', 'openid email profile', ${b(true)}, ${now()}, ${now()})`);
+
+      // Apply the remaining migrations (1.34.0 — the rebuild).
+      await runMigrations({ skipSeed: true });
+    }, 60_000);
+
+    it("kept the seeded OIDC provider's original columns intact through the rebuild", async () => {
+      const rows = await h.rawAll(sql`SELECT id, type, display_name, issuer, client_id, client_secret_encrypted, scopes
+        FROM rbac_sso_providers WHERE id = ${provId}`);
+      expect(rows).toHaveLength(1);
+      const row = rows[0];
+      expect(String(row.id)).toBe(provId);
+      expect(String(row.type)).toBe("oidc");
+      expect(String(row.display_name)).toBe("Acme OIDC");
+      expect(String(row.issuer)).toBe("https://idp.acme.test");
+      expect(String(row.client_id)).toBe("acme-client");
+      expect(String(row.client_secret_encrypted)).toBe("enc:secret");
+      expect(String(row.scopes)).toBe("openid email profile");
+    });
+
+    it("left the six new SAML columns NULL on the migrated row", async () => {
+      const rows = await h.rawAll(sql`SELECT
+        saml_idp_entity_id, saml_idp_sso_url, saml_idp_certificate,
+        saml_sp_entity_id, saml_nameid_format, saml_allow_idp_initiated
+        FROM rbac_sso_providers WHERE id = ${provId}`);
+      expect(rows).toHaveLength(1);
+      for (const v of Object.values(rows[0])) {
+        expect(v).toBeNull();
+      }
+    });
+
+    it("is idempotent — re-running the rebuild leaves a single intact row", async () => {
+      const result = await runMigrations({ skipSeed: true });
+      expect(result.migrationsApplied).toEqual([]);
+      expect(await h.rowCount("rbac_sso_providers")).toBe(1);
+
+      const rows = await h.rawAll(sql`SELECT id, type, display_name, issuer, client_id, client_secret_encrypted, scopes
+        FROM rbac_sso_providers WHERE id = ${provId}`);
+      expect(rows).toHaveLength(1);
+      expect(String(rows[0].client_id)).toBe("acme-client");
+      expect(String(rows[0].client_secret_encrypted)).toBe("enc:secret");
+      expect(String(rows[0].scopes)).toBe("openid email profile");
     });
   });
 }

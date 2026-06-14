@@ -7,6 +7,20 @@
 
 import * as oidc from "openid-client";
 import type { SsoProviderConfig } from "./config";
+import { logger } from "../../utils/logger";
+
+// Authorization-request params the app controls — never overridable via auth_params.
+const RESERVED_AUTH_PARAMS = new Set([
+  "redirect_uri",
+  "scope",
+  "state",
+  "nonce",
+  "response_type",
+  "client_id",
+  "client_secret",
+  "code_challenge",
+  "code_challenge_method",
+]);
 
 export interface SsoIdentity {
   provider: string;
@@ -26,9 +40,25 @@ export async function getProviderConfiguration(
   const hit = configCache.get(p.id);
   if (hit) return hit;
 
+  if (p.type === "saml") {
+    throw new Error("[SSO] getProviderConfiguration does not handle SAML providers (use saml/client.ts)");
+  }
+
   let cfg: oidc.Configuration;
   if (p.type === "oidc") {
     cfg = await oidc.discovery(new URL(p.issuer), p.clientId, p.clientSecret);
+    // Optional overrides: replace individual discovered endpoints (e.g. a broken
+    // or proxied one) while keeping the rest of the discovery document — notably
+    // jwks_uri and the iss-parameter support flag, which ID-token validation needs.
+    if (p.authorizationEndpoint || p.tokenEndpoint || p.userinfoEndpoint) {
+      const merged = {
+        ...cfg.serverMetadata(),
+        ...(p.authorizationEndpoint && { authorization_endpoint: p.authorizationEndpoint }),
+        ...(p.tokenEndpoint && { token_endpoint: p.tokenEndpoint }),
+        ...(p.userinfoEndpoint && { userinfo_endpoint: p.userinfoEndpoint }),
+      } as unknown as oidc.ServerMetadata;
+      cfg = new oidc.Configuration(merged, p.clientId, p.clientSecret);
+    }
   } else {
     // Configuration 3rd param accepts a bare string as shorthand for client_secret
     cfg = new oidc.Configuration(
@@ -62,6 +92,9 @@ export async function buildAuthorizationRedirect(
   p: SsoProviderConfig,
   redirectUri: string
 ): Promise<AuthorizationRedirect> {
+  if (p.type === "saml") {
+    throw new Error("[SSO] buildAuthorizationRedirect does not handle SAML providers (use saml/client.ts)");
+  }
   const cfg = await getProviderConfiguration(p);
   const codeVerifier = oidc.randomPKCECodeVerifier();
   const codeChallenge = await oidc.calculatePKCECodeChallenge(codeVerifier);
@@ -77,6 +110,21 @@ export async function buildAuthorizationRedirect(
   };
   if (p.type === "oidc") params.nonce = nonce;
 
+  // Merge admin-configured extra params (prompt, hd, audience, …). Reserved keys
+  // the app controls are dropped so they can't be hijacked.
+  if (p.authParams) {
+    for (const [key, value] of Object.entries(p.authParams)) {
+      if (RESERVED_AUTH_PARAMS.has(key)) {
+        logger.warn(
+          { module: "SSO", provider: p.id, param: key },
+          "Ignoring reserved key in auth_params"
+        );
+        continue;
+      }
+      params[key] = value;
+    }
+  }
+
   const url = oidc.buildAuthorizationUrl(cfg, params);
   return { url: url.toString(), state, nonce, codeVerifier };
 }
@@ -86,6 +134,9 @@ export async function exchangeCodeForIdentity(
   callbackUrl: URL,
   checks: { codeVerifier: string; state: string; nonce: string }
 ): Promise<SsoIdentity> {
+  if (p.type === "saml") {
+    throw new Error("[SSO] exchangeCodeForIdentity does not handle SAML providers (use saml/client.ts)");
+  }
   const cfg = await getProviderConfiguration(p);
 
   const tokens = await oidc.authorizationCodeGrant(cfg, callbackUrl, {
@@ -101,7 +152,7 @@ export async function exchangeCodeForIdentity(
     if (!claims) {
       throw new Error(`[SSO] Provider ${p.id} returned no ID token claims`);
     }
-    return normalizeOidcClaims(p.id, claims as Record<string, unknown>);
+    return normalizeOidcClaims(p.id, claims as Record<string, unknown>, p.claimMapping);
   }
 
   // skipSubjectCheck is required: plain OAuth2 userinfo has no ID-token sub to
@@ -121,28 +172,29 @@ export async function exchangeCodeForIdentity(
 
 export function normalizeOidcClaims(
   providerId: string,
-  claims: Record<string, unknown>
+  claims: Record<string, unknown>,
+  // Optional override: which claim to read for each field. Defaults to the OIDC
+  // standard names (sub / email / preferred_username / name).
+  mapping?: Record<string, string>
 ): SsoIdentity {
-  const subject = claims.sub;
-  if (typeof subject !== "string" || subject.length === 0) {
+  const str = (claim: string): string | null =>
+    typeof claims[claim] === "string" ? (claims[claim] as string) : null;
+
+  const subject = str(mapping?.subject ?? "sub");
+  if (!subject) {
     throw new Error(
-      `[SSO] Provider ${providerId} ID token has no sub claim`
+      `[SSO] Provider ${providerId} ID token has no ${mapping?.subject ?? "sub"} claim`
     );
   }
-  const email =
-    typeof claims.email === "string" ? claims.email.toLowerCase() : null;
-  const username =
-    typeof claims.preferred_username === "string"
-      ? claims.preferred_username.toLowerCase()
-      : null;
+  const email = str(mapping?.email ?? "email");
+  const username = str(mapping?.username ?? "preferred_username");
   return {
     provider: providerId,
     subject,
-    email,
+    email: email ? email.toLowerCase() : null,
     emailVerified: claims.email_verified === true,
-    username,
-    displayName:
-      typeof claims.name === "string" ? claims.name : null,
+    username: username ? username.toLowerCase() : null,
+    displayName: str(mapping?.displayName ?? "name"),
     claims,
   };
 }

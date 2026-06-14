@@ -109,6 +109,7 @@ const PERMISSION_CATEGORIES: Record<string, string> = {
   'ai': 'AI Assistant',
   'ai_models': 'AI Models',
   'data_access': 'Data Access',
+  'sso': 'SSO Management',
 };
 
 const getPermissionCategory = (permission: string): string => {

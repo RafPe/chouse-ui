@@ -26,6 +26,18 @@ describe("normalizeOidcClaims", () => {
       normalizeOidcClaims("okta", { email: "x@y.z" } as never)
     ).toThrow();
   });
+
+  it("honors a claim_mapping override, falling back to standard names", () => {
+    const id = normalizeOidcClaims(
+      "okta",
+      { sub: "s1", mail: "A@B.co", upn: "Alice", name: "Alice A", email_verified: true },
+      { email: "mail", username: "upn" }
+    );
+    expect(id.subject).toBe("s1"); // sub still standard (not overridden)
+    expect(id.email).toBe("a@b.co"); // read from "mail"
+    expect(id.username).toBe("alice"); // read from "upn"
+    expect(id.emailVerified).toBe(true);
+  });
 });
 
 describe("applyClaimMapping", () => {
@@ -46,6 +58,41 @@ describe("applyClaimMapping", () => {
     expect(() =>
       applyClaimMapping("github", { subject: "id" }, { login: "x" })
     ).toThrow(/subject/);
+  });
+});
+
+describe("buildAuthorizationRedirect auth_params", () => {
+  beforeEach(async () => {
+    const { resetProviderConfigurationCache } = await import("./client");
+    resetProviderConfigurationCache();
+  });
+
+  it("merges custom auth_params but ignores reserved keys", async () => {
+    const { buildAuthorizationRedirect } = await import("./client");
+    const result = await buildAuthorizationRedirect(
+      {
+        id: "gh-params",
+        type: "oauth2" as const,
+        displayName: "GitHub",
+        clientId: "client-id",
+        clientSecret: "client-secret",
+        scopes: "read:user",
+        authorizationEndpoint: "https://github.com/login/oauth/authorize",
+        tokenEndpoint: "https://github.com/login/oauth/access_token",
+        userinfoEndpoint: "https://api.github.com/user",
+        claimMapping: { subject: "id", email: "email", username: "login" },
+        authParams: { prompt: "consent", audience: "https://api.acme", state: "evil", scope: "hacked" },
+      },
+      "https://app.example.com/callback"
+    );
+    const url = new URL(result.url);
+    // Custom params pass through…
+    expect(url.searchParams.get("prompt")).toBe("consent");
+    expect(url.searchParams.get("audience")).toBe("https://api.acme");
+    // …but reserved keys are NOT overridable.
+    expect(url.searchParams.get("state")).toBe(result.state);
+    expect(url.searchParams.get("state")).not.toBe("evil");
+    expect(url.searchParams.get("scope")).toBe("read:user");
   });
 });
 
@@ -137,6 +184,44 @@ describe("buildAuthorizationRedirect (oidc, mocked discovery)", () => {
     expect(result.nonce).toBe(url.searchParams.get("nonce"));
     expect(url.searchParams.has("code_challenge")).toBe(true);
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+  });
+
+  it("applies OIDC endpoint overrides on top of discovery", async () => {
+    const oidcReal = await import("openid-client");
+    const discovered = new oidcReal.Configuration(
+      {
+        issuer: "https://accounts.google.com",
+        authorization_endpoint: "https://accounts.google.com/o/oauth2/v2/auth",
+        token_endpoint: "https://oauth2.googleapis.com/token",
+      },
+      "client-id",
+      "client-secret"
+    );
+    mock.module("openid-client", () => ({
+      ...oidcReal,
+      discovery: async () => discovered,
+    }));
+
+    const { buildAuthorizationRedirect, resetProviderConfigurationCache } =
+      await import("./client");
+    resetProviderConfigurationCache();
+
+    const result = await buildAuthorizationRedirect(
+      {
+        id: "google-override",
+        type: "oidc" as const,
+        displayName: "Google",
+        clientId: "client-id",
+        clientSecret: "client-secret",
+        scopes: "openid email",
+        issuer: "https://accounts.google.com",
+        authorizationEndpoint: "https://proxy.example.com/authorize",
+      },
+      "https://app.example.com/callback"
+    );
+
+    // The authorization URL must use the override host, not the discovered one.
+    expect(new URL(result.url).origin).toBe("https://proxy.example.com");
   });
 });
 

@@ -765,3 +765,7 @@ export async function getUserConnections(userId: string): Promise<ConnectionResp
   }));
 }
 
+/** Generic secret encryption — same AES-256-GCM scheme as connection passwords. */
+export const encryptSecret = encryptPassword;
+export const decryptSecret = decryptPassword;
+

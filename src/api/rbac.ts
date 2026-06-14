@@ -1691,6 +1691,91 @@ export async function checkRbacHealth(): Promise<{
 }
 
 // ============================================
+// SSO Admin API
+// ============================================
+
+export interface SsoAdminSettings {
+  enabled: boolean;
+  baseUrl: string | null;
+  defaultRole: string;
+  autoLinkByEmail: boolean;
+  // 'config' → env/YAML-defined, read-only; 'database' → editable DB row;
+  // 'default' → nothing configured yet (editable, creates the first row).
+  source: 'config' | 'database' | 'default';
+}
+
+export interface SsoAdminProvider {
+  id: string;
+  type: 'oidc' | 'oauth2' | 'saml';
+  displayName: string;
+  source: 'config' | 'database';
+  enabled: boolean;
+  hasSecret: boolean;
+  issuer?: string | null;
+  authorizationEndpoint?: string | null;
+  tokenEndpoint?: string | null;
+  userinfoEndpoint?: string | null;
+  clientId?: string;
+  scopes?: string;
+  claimMapping?: string | null;
+  roleMappingClaim?: string | null;
+  roleMapping?: string | null;
+  authParams?: string | null;
+  samlIdpEntityId?: string | null;
+  samlIdpSsoUrl?: string | null;
+  samlIdpCertificate?: string | null;
+  samlSpEntityId?: string | null;
+  samlNameIdFormat?: string | null;
+  samlAllowIdpInitiated?: boolean | null;
+  samlTrustEmailVerified?: boolean | null;
+  linkedUserCount?: number;
+}
+
+export interface SsoTestResult {
+  ok: boolean;
+  err?: string;
+  code?: string;
+  oauthError?: string;
+  oauthErrorDescription?: string;
+  cause?: string;
+}
+
+export const rbacSsoAdminApi = {
+  async getSettings(): Promise<SsoAdminSettings> {
+    return rbacFetch<SsoAdminSettings>('/sso-admin/settings');
+  },
+
+  async updateSettings(input: Omit<SsoAdminSettings, 'source'>): Promise<void> {
+    await rbacFetch('/sso-admin/settings', { method: 'PUT', body: JSON.stringify(input) });
+  },
+
+  async getProviders(): Promise<SsoAdminProvider[]> {
+    const r = await rbacFetch<{ providers: SsoAdminProvider[] }>('/sso-admin/providers');
+    return r.providers;
+  },
+
+  async createProvider(input: Record<string, unknown>): Promise<{ id: string }> {
+    return rbacFetch('/sso-admin/providers', { method: 'POST', body: JSON.stringify(input) });
+  },
+
+  async updateProvider(id: string, input: Record<string, unknown>): Promise<void> {
+    await rbacFetch(`/sso-admin/providers/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) });
+  },
+
+  async deleteProvider(id: string): Promise<{ unlinkedUserCount: number }> {
+    return rbacFetch(`/sso-admin/providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+
+  async testProvider(input: Record<string, unknown>): Promise<SsoTestResult> {
+    return rbacFetch('/sso-admin/providers/test', { method: 'POST', body: JSON.stringify(input) });
+  },
+
+  async parseSamlMetadata(input: { xml: string }): Promise<{ idpEntityId: string; idpSsoUrl: string; idpCertificate: string }> {
+    return rbacFetch('/sso-admin/providers/parse-metadata', { method: 'POST', body: JSON.stringify(input) });
+  },
+};
+
+// ============================================
 // SSO API
 // ============================================
 
@@ -1741,6 +1826,33 @@ export const ssoApi = {
         'X-Requested-With': 'XMLHttpRequest',
       },
       body: JSON.stringify({ params }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new ApiError(
+        data.error?.message || 'SSO sign-in failed',
+        response.status,
+        data.error?.code
+      );
+    }
+    setRbacTokens(data.data.tokens);
+    return data.data;
+  },
+
+  /**
+   * Complete a SAML login via the browser-POST handoff. The SAML ACS redirects
+   * the browser to /login/sso-complete?code=<one-time-code>; this exchanges that
+   * single-use code for the session (user + tokens) and the post-login redirect.
+   * The code is short-lived and server-bound — never log it or put tokens in the URL.
+   */
+  async samlExchange(code: string): Promise<SsoCallbackResponse> {
+    const response = await fetch('/api/rbac/auth/sso/saml/exchange', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: JSON.stringify({ code }),
     });
     const data = await response.json();
     if (!response.ok) {

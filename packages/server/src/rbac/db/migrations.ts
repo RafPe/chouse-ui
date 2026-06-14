@@ -44,7 +44,7 @@ export interface MigrationResult {
 // Current App Version
 // ============================================
 
-export const APP_VERSION = '1.31.0';
+export const APP_VERSION = '1.35.0';
 
 // ============================================
 // Error Helpers
@@ -69,6 +69,38 @@ function isUniqueConstraintError(error: unknown): boolean {
   const causeMsg = err.cause?.message ?? '';
   const check = (m: string) => m.includes('UNIQUE') || m.includes('unique');
   return check(msg) || check(causeMsg);
+}
+
+/**
+ * Rebuild rbac_sso_providers so that client_id / client_secret_encrypted / scopes
+ * are nullable. SQLite cannot DROP NOT NULL in place, so we recreate the table once.
+ * Idempotent: skips the rebuild if client_id is already nullable. The six SAML
+ * columns must already exist on the old table (added by the ADD COLUMN loop) before
+ * this runs, because the INSERT ... SELECT copies them across.
+ */
+async function rebuildSsoProvidersNullable(db: SqliteDb): Promise<void> {
+  const info = db.all(sql`SELECT name, "notnull" FROM pragma_table_info('rbac_sso_providers')`) as Array<{ name: string; notnull: number }>;
+  const clientId = info.find((c) => c.name === 'client_id');
+  if (!clientId || clientId.notnull === 0) return; // already nullable
+  db.run(sql`PRAGMA foreign_keys=OFF`);
+  db.run(sql`CREATE TABLE rbac_sso_providers__new (
+    id TEXT PRIMARY KEY NOT NULL, type TEXT NOT NULL, display_name TEXT NOT NULL,
+    issuer TEXT, authorization_endpoint TEXT, token_endpoint TEXT, userinfo_endpoint TEXT,
+    client_id TEXT, client_secret_encrypted TEXT, scopes TEXT,
+    claim_mapping TEXT, role_mapping_claim TEXT, role_mapping TEXT, auth_params TEXT,
+    saml_idp_entity_id TEXT, saml_idp_sso_url TEXT, saml_idp_certificate TEXT,
+    saml_sp_entity_id TEXT, saml_nameid_format TEXT, saml_allow_idp_initiated INTEGER,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()), updated_at INTEGER NOT NULL DEFAULT (unixepoch()), created_by TEXT
+  )`);
+  db.run(sql`INSERT INTO rbac_sso_providers__new SELECT
+    id, type, display_name, issuer, authorization_endpoint, token_endpoint, userinfo_endpoint,
+    client_id, client_secret_encrypted, scopes, claim_mapping, role_mapping_claim, role_mapping, auth_params,
+    saml_idp_entity_id, saml_idp_sso_url, saml_idp_certificate, saml_sp_entity_id, saml_nameid_format, saml_allow_idp_initiated,
+    enabled, created_at, updated_at, created_by FROM rbac_sso_providers`);
+  db.run(sql`DROP TABLE rbac_sso_providers`);
+  db.run(sql`ALTER TABLE rbac_sso_providers__new RENAME TO rbac_sso_providers`);
+  db.run(sql`PRAGMA foreign_keys=ON`);
 }
 
 // ============================================
@@ -3113,6 +3145,220 @@ export const MIGRATIONS: Migration[] = [
       }
       logger.info({ module: 'RBAC', phase: 'migration' }, '[Migration 1.31.0] Created rbac_clickhouse_role_state table');
     },
+  },
+  {
+    version: '1.32.0',
+    name: 'sso_admin_tables',
+    description: 'Add rbac_sso_settings + rbac_sso_providers; grant sso:view/sso:edit/sso:delete',
+    up: async (db) => {
+      const { getDatabaseType } = await import('./index');
+      const { sql } = await import('drizzle-orm');
+      const dbType = getDatabaseType();
+
+      if (dbType === 'sqlite') {
+        (db as SqliteDb).run(sql`
+          CREATE TABLE IF NOT EXISTS rbac_sso_settings (
+            id TEXT PRIMARY KEY NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            base_url TEXT,
+            default_role TEXT NOT NULL DEFAULT 'viewer',
+            auto_link_by_email INTEGER NOT NULL DEFAULT 1,
+            updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            updated_by TEXT
+          )`);
+        (db as SqliteDb).run(sql`
+          CREATE TABLE IF NOT EXISTS rbac_sso_providers (
+            id TEXT PRIMARY KEY NOT NULL,
+            type TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            issuer TEXT,
+            authorization_endpoint TEXT,
+            token_endpoint TEXT,
+            userinfo_endpoint TEXT,
+            client_id TEXT NOT NULL,
+            client_secret_encrypted TEXT NOT NULL,
+            scopes TEXT NOT NULL,
+            claim_mapping TEXT,
+            role_mapping_claim TEXT,
+            role_mapping TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            created_by TEXT
+          )`);
+      } else {
+        await (db as PostgresDb).execute(sql`
+          CREATE TABLE IF NOT EXISTS rbac_sso_settings (
+            id TEXT PRIMARY KEY NOT NULL,
+            enabled BOOLEAN NOT NULL DEFAULT FALSE,
+            base_url TEXT,
+            default_role TEXT NOT NULL DEFAULT 'viewer',
+            auto_link_by_email BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+            updated_by TEXT
+          )`);
+        await (db as PostgresDb).execute(sql`
+          CREATE TABLE IF NOT EXISTS rbac_sso_providers (
+            id TEXT PRIMARY KEY NOT NULL,
+            type TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            issuer TEXT,
+            authorization_endpoint TEXT,
+            token_endpoint TEXT,
+            userinfo_endpoint TEXT,
+            client_id TEXT NOT NULL,
+            client_secret_encrypted TEXT NOT NULL,
+            scopes TEXT NOT NULL,
+            claim_mapping TEXT,
+            role_mapping_claim TEXT,
+            role_mapping TEXT,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+            created_by TEXT
+          )`);
+      }
+
+      // Seed the two new permissions (idempotent) and grant them.
+      const { seedPermissions } = await import('../services/seed');
+      const permissionIdMap = await seedPermissions();
+      const ssoViewId = permissionIdMap.get('sso:view');
+      const ssoEditId = permissionIdMap.get('sso:edit');
+      const ssoDeleteId = permissionIdMap.get('sso:delete');
+      const { SYSTEM_ROLES } = await import('../schema/base');
+      const { randomUUID } = await import('crypto');
+
+      // grant: super_admin -> [view, edit, delete]; admin -> [view]
+      const grants: Array<{ role: string; perm: string | undefined }> = [
+        { role: SYSTEM_ROLES.SUPER_ADMIN, perm: ssoViewId },
+        { role: SYSTEM_ROLES.SUPER_ADMIN, perm: ssoEditId },
+        { role: SYSTEM_ROLES.SUPER_ADMIN, perm: ssoDeleteId },
+        { role: SYSTEM_ROLES.ADMIN, perm: ssoViewId },
+      ];
+      for (const { role, perm } of grants) {
+        if (!perm) continue;
+        let roleRows: Array<{ id: string }>;
+        if (dbType === 'sqlite') {
+          roleRows = (db as SqliteDb).all(sql`SELECT id FROM rbac_roles WHERE name = ${role} LIMIT 1`) as Array<{ id: string }>;
+        } else {
+          const r = await (db as PostgresDb).execute(sql`SELECT id FROM rbac_roles WHERE name = ${role} LIMIT 1`);
+          roleRows = (Array.isArray(r) ? r : (r as { rows?: unknown[] }).rows ?? []) as Array<{ id: string }>;
+        }
+        if (roleRows.length === 0) continue;
+        const roleId = roleRows[0].id;
+        let existing: Array<unknown>;
+        if (dbType === 'sqlite') {
+          existing = (db as SqliteDb).all(sql`SELECT 1 FROM rbac_role_permissions WHERE role_id = ${roleId} AND permission_id = ${perm} LIMIT 1`);
+        } else {
+          const r = await (db as PostgresDb).execute(sql`SELECT 1 FROM rbac_role_permissions WHERE role_id = ${roleId} AND permission_id = ${perm} LIMIT 1`);
+          existing = (Array.isArray(r) ? r : (r as { rows?: unknown[] }).rows ?? []) as Array<unknown>;
+        }
+        if (existing.length > 0) continue;
+        const id = randomUUID();
+        const now = new Date();
+        if (dbType === 'sqlite') {
+          (db as SqliteDb).run(sql`INSERT INTO rbac_role_permissions (id, role_id, permission_id, created_at) VALUES (${id}, ${roleId}, ${perm}, ${Math.floor(now.getTime() / 1000)})`);
+        } else {
+          await (db as PostgresDb).execute(sql`INSERT INTO rbac_role_permissions (id, role_id, permission_id, created_at) VALUES (${id}, ${roleId}, ${perm}, ${now.toISOString()})`);
+        }
+      }
+      logger.info({ module: 'RBAC', phase: 'migration' }, '[Migration 1.32.0] SSO admin tables + permissions');
+    },
+    down: async (db) => {
+      const { getDatabaseType } = await import('./index');
+      const { sql } = await import('drizzle-orm');
+      if (getDatabaseType() === 'sqlite') {
+        (db as SqliteDb).run(sql`DROP TABLE IF EXISTS rbac_sso_providers`);
+        (db as SqliteDb).run(sql`DROP TABLE IF EXISTS rbac_sso_settings`);
+      } else {
+        await (db as PostgresDb).execute(sql`DROP TABLE IF EXISTS rbac_sso_providers`);
+        await (db as PostgresDb).execute(sql`DROP TABLE IF EXISTS rbac_sso_settings`);
+      }
+      logger.info({ module: 'RBAC', phase: 'migration' }, '[Migration 1.32.0] Dropped SSO admin tables');
+    },
+  },
+  {
+    version: '1.33.0',
+    name: 'sso_auth_params',
+    description: 'Add auth_params column to rbac_sso_providers (extra authorization params)',
+    up: async (db) => {
+      const dbType = getDatabaseType();
+      if (dbType === 'sqlite') {
+        // SQLite has no ADD COLUMN IF NOT EXISTS — add, tolerate "already exists".
+        try {
+          (db as SqliteDb).run(sql`ALTER TABLE rbac_sso_providers ADD COLUMN auth_params TEXT`);
+        } catch (error: unknown) {
+          if (!isDuplicateColumnError(error)) throw error;
+        }
+      } else {
+        await (db as PostgresDb).execute(
+          sql`ALTER TABLE rbac_sso_providers ADD COLUMN IF NOT EXISTS auth_params TEXT`
+        );
+      }
+      logger.info({ module: 'RBAC', phase: 'migration' }, '[Migration 1.33.0] Added auth_params column');
+    },
+    down: async (db) => {
+      const dbType = getDatabaseType();
+      if (dbType === 'sqlite') {
+        // SQLite DROP COLUMN is unreliable across versions — leave the column.
+        logger.info({ module: 'RBAC', phase: 'migration' }, '[Migration 1.33.0] SQLite DROP COLUMN skipped');
+      } else {
+        await (db as PostgresDb).execute(
+          sql`ALTER TABLE rbac_sso_providers DROP COLUMN IF EXISTS auth_params`
+        );
+      }
+    },
+  },
+  {
+    version: '1.34.0',
+    name: 'saml_provider_columns',
+    description: 'Add SAML provider columns; relax client_id/secret/scopes to nullable',
+    up: async (db) => {
+      const dbType = getDatabaseType();
+      const cols: Array<[string, 'text' | 'bool']> = [
+        ['saml_idp_entity_id', 'text'], ['saml_idp_sso_url', 'text'],
+        ['saml_idp_certificate', 'text'], ['saml_sp_entity_id', 'text'],
+        ['saml_nameid_format', 'text'], ['saml_allow_idp_initiated', 'bool'],
+      ];
+      if (dbType === 'sqlite') {
+        for (const [name, kind] of cols) {
+          try {
+            (db as SqliteDb).run(sql.raw(`ALTER TABLE rbac_sso_providers ADD COLUMN ${name} ${kind === 'bool' ? 'INTEGER' : 'TEXT'}`));
+          } catch (error: unknown) {
+            if (!isDuplicateColumnError(error)) throw error;
+          }
+        }
+        // SQLite cannot DROP NOT NULL in place, so rebuild the table once
+        // (idempotent — see the guard in rebuildSsoProvidersNullable).
+        await rebuildSsoProvidersNullable(db as SqliteDb);
+      } else {
+        for (const [name, kind] of cols) {
+          await (db as PostgresDb).execute(sql.raw(`ALTER TABLE rbac_sso_providers ADD COLUMN IF NOT EXISTS ${name} ${kind === 'bool' ? 'BOOLEAN' : 'TEXT'}`));
+        }
+        await (db as PostgresDb).execute(sql`ALTER TABLE rbac_sso_providers ALTER COLUMN client_id DROP NOT NULL`);
+        await (db as PostgresDb).execute(sql`ALTER TABLE rbac_sso_providers ALTER COLUMN client_secret_encrypted DROP NOT NULL`);
+        await (db as PostgresDb).execute(sql`ALTER TABLE rbac_sso_providers ALTER COLUMN scopes DROP NOT NULL`);
+      }
+      logger.info({ module: 'RBAC', phase: 'migration' }, '[Migration 1.34.0] SAML columns + nullable relax');
+    },
+    down: async () => { /* forward-only; columns/relax left in place */ },
+  },
+  {
+    version: '1.35.0',
+    name: 'saml_trust_email_verified',
+    description: 'Add saml_trust_email_verified column to rbac_sso_providers',
+    up: async (db) => {
+      const dbType = getDatabaseType();
+      if (dbType === 'sqlite') {
+        try {
+          (db as SqliteDb).run(sql`ALTER TABLE rbac_sso_providers ADD COLUMN saml_trust_email_verified INTEGER`);
+        } catch (error: unknown) { if (!isDuplicateColumnError(error)) throw error; }
+      } else {
+        await (db as PostgresDb).execute(sql`ALTER TABLE rbac_sso_providers ADD COLUMN IF NOT EXISTS saml_trust_email_verified BOOLEAN`);
+      }
+      logger.info({ module: 'RBAC', phase: 'migration' }, '[Migration 1.35.0] Added saml_trust_email_verified');
+    },
+    down: async () => { /* forward-only */ },
   },
 ];
 

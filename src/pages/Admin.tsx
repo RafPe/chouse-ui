@@ -10,11 +10,13 @@ import { DataAccessPolicies } from "@/features/admin/components/DataAccessPolici
 import ClickHouseUsersManagement from "@/features/admin/components/ClickHouseUsers";
 import ClickHouseRolesManagement from "@/features/admin/components/ClickHouseRoles";
 import AiModelsManagement from "@/features/admin/components/AiModels";
+import SsoSettings from "@/features/admin/components/SsoSettings";
 import { useRbacStore, RBAC_PERMISSIONS } from "@/stores";
 import { cn } from "@/lib/utils";
 import {
   Bot,
   InfoIcon,
+  KeyRound,
   ShieldCheck,
   Users,
   Shield,
@@ -39,7 +41,8 @@ type AdminTabKey =
   | "clickhouse-users"
   | "clickhouse-roles"
   | "audit"
-  | "ai-models";
+  | "ai-models"
+  | "sso";
 
 const ADMIN_TAB_CONFIG: Record<AdminTabKey, AdminTabConfig> = {
   users: {
@@ -82,6 +85,11 @@ const ADMIN_TAB_CONFIG: Record<AdminTabKey, AdminTabConfig> = {
     label: "AI models",
     description: "Configure LLMs",
   },
+  sso: {
+    icon: KeyRound,
+    label: "SSO",
+    description: "Single sign-on settings & providers",
+  },
 };
 
 // Two-tier navigation. Sections are clustered into labelled groups; the group
@@ -100,7 +108,7 @@ const ADMIN_TAB_GROUPS: AdminTabGroup[] = [
   { label: "Access control", icon: Shield, tabs: ["users", "roles", "data-access"] },
   { label: "CH Management", icon: Server, tabs: ["connections", "clickhouse-users", "clickhouse-roles"] },
   { label: "Intelligence", icon: Bot, tabs: ["ai-models"] },
-  { label: "Security", icon: FileText, tabs: ["audit"] },
+  { label: "Security", icon: FileText, tabs: ["sso", "audit"] },
 ];
 
 // Top-level group selector — segmented chip (icon + label), active one filled.
@@ -183,6 +191,7 @@ export default function Admin() {
   const canViewClickHouseUsers = hasPermission(RBAC_PERMISSIONS.CH_USERS_VIEW);
   const canViewClickHouseRoles = hasPermission(RBAC_PERMISSIONS.CH_ROLES_VIEW);
   const canViewAiModels = hasPermission(RBAC_PERMISSIONS.AI_MODELS_VIEW);
+  const canViewSso = hasPermission(RBAC_PERMISSIONS.SSO_VIEW);
 
   const { tab } = useParams<{ tab: string }>();
   const navigate = useNavigate();
@@ -195,6 +204,7 @@ export default function Admin() {
     ...(canViewClickHouseUsers ? (["clickhouse-users"] as AdminTabKey[]) : []),
     ...(canViewClickHouseRoles ? (["clickhouse-roles"] as AdminTabKey[]) : []),
     ...(canViewAiModels ? (["ai-models"] as AdminTabKey[]) : []),
+    ...(canViewSso ? (["sso"] as AdminTabKey[]) : []),
     ...(canViewAudit ? (["audit"] as AdminTabKey[]) : []),
   ];
 
@@ -353,6 +363,14 @@ export default function Admin() {
             <TabsContent value="ai-models" className="mt-0 h-full outline-none">
               <div className="rounded-md border border-ink-500 bg-ink-100">
                 <AiModelsManagement />
+              </div>
+            </TabsContent>
+          )}
+
+          {activeTab === "sso" && canViewSso && (
+            <TabsContent value="sso" className="mt-0 h-full outline-none">
+              <div className="rounded-md border border-ink-500 bg-ink-100">
+                <SsoSettings />
               </div>
             </TabsContent>
           )}

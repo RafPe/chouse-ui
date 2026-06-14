@@ -18,6 +18,13 @@ const PROVIDER_PREFIX = 'AUTH_SSO_PROVIDERS_';
 // Provider ids may themselves contain underscores, so we match the suffix
 // against this fixed list and treat the remainder as the provider id.
 const FIELD_SUFFIXES = [
+  'SAML_TRUST_EMAIL_VERIFIED',
+  'SAML_ALLOW_IDP_INITIATED',
+  'SAML_IDP_CERTIFICATE',
+  'SAML_IDP_ENTITY_ID',
+  'SAML_NAMEID_FORMAT',
+  'SAML_IDP_SSO_URL',
+  'SAML_SP_ENTITY_ID',
   'AUTHORIZATION_ENDPOINT',
   'ROLE_MAPPING_CLAIM',
   'USERINFO_ENDPOINT',
@@ -26,6 +33,7 @@ const FIELD_SUFFIXES = [
   'CLAIM_MAPPING',
   'DISPLAY_NAME',
   'ROLE_MAPPING',
+  'AUTH_PARAMS',
   'CLIENT_ID',
   'ISSUER',
   'SCOPES',
@@ -52,11 +60,19 @@ const CommonProviderSchema = z.object({
   scopes: z.string().min(1),
   roleMappingClaim: z.string().optional(),
   roleMapping: z.record(z.string()).optional(),
+  // Extra params merged into the authorization request (e.g. prompt, hd, audience).
+  authParams: z.record(z.string()).optional(),
 });
 
 const OidcProviderSchema = CommonProviderSchema.extend({
   type: z.literal('oidc'),
   issuer: z.string().url(),
+  // Optional overrides: endpoints normally come from OIDC discovery, claims from
+  // the ID token's standard names. Provide these only to override either.
+  authorizationEndpoint: z.string().url().optional(),
+  tokenEndpoint: z.string().url().optional(),
+  userinfoEndpoint: z.string().url().optional(),
+  claimMapping: z.record(z.string()).optional(),
 });
 
 const Oauth2ProviderSchema = CommonProviderSchema.extend({
@@ -67,9 +83,27 @@ const Oauth2ProviderSchema = CommonProviderSchema.extend({
   claimMapping: z.record(z.string()).default({ subject: 'sub', email: 'email', username: 'username' }),
 });
 
-const ProviderSchema = z.discriminatedUnion('type', [OidcProviderSchema, Oauth2ProviderSchema]);
+const SamlProviderSchema = z.object({
+  type: z.literal('saml'),
+  displayName: z.string().min(1),
+  samlIdpEntityId: z.string().min(1),
+  samlIdpSsoUrl: z.string().url(),
+  samlIdpCertificate: z.string().min(1),
+  samlSpEntityId: z.string().min(1),
+  samlNameIdFormat: z.string().optional(),
+  samlAllowIdpInitiated: z.boolean().optional(),
+  samlTrustEmailVerified: z.boolean().optional(),
+  claimMapping: z.record(z.string()).optional(),
+  roleMappingClaim: z.string().optional(),
+  roleMapping: z.record(z.string()).optional(),
+});
 
-export type SsoProviderConfig = z.infer<typeof ProviderSchema> & { id: string };
+const ProviderSchema = z.discriminatedUnion('type', [OidcProviderSchema, Oauth2ProviderSchema, SamlProviderSchema]);
+
+export type SsoProviderConfig = z.infer<typeof ProviderSchema> & {
+  id: string;
+  source: 'config' | 'database';
+};
 
 export interface SsoConfig {
   enabled: boolean;
@@ -92,6 +126,14 @@ const FIELD_TO_KEY: Record<string, string> = {
   CLAIM_MAPPING: 'claimMapping',
   ROLE_MAPPING_CLAIM: 'roleMappingClaim',
   ROLE_MAPPING: 'roleMapping',
+  AUTH_PARAMS: 'authParams',
+  SAML_IDP_ENTITY_ID: 'samlIdpEntityId',
+  SAML_IDP_SSO_URL: 'samlIdpSsoUrl',
+  SAML_IDP_CERTIFICATE: 'samlIdpCertificate',
+  SAML_SP_ENTITY_ID: 'samlSpEntityId',
+  SAML_NAMEID_FORMAT: 'samlNameIdFormat',
+  SAML_ALLOW_IDP_INITIATED: 'samlAllowIdpInitiated',
+  SAML_TRUST_EMAIL_VERIFIED: 'samlTrustEmailVerified',
 };
 
 export function loadSsoConfig(env: Record<string, string | undefined> = process.env): SsoConfig {
@@ -130,6 +172,10 @@ export function loadSsoConfig(env: Record<string, string | undefined> = process.
     if (typeof candidate.type === 'string') candidate.type = candidate.type.toLowerCase();
     if (typeof fields.claimMapping === 'string') candidate.claimMapping = parsePairs(fields.claimMapping);
     if (typeof fields.roleMapping === 'string') candidate.roleMapping = parsePairs(fields.roleMapping);
+    if (typeof fields.authParams === 'string') candidate.authParams = parsePairs(fields.authParams);
+    if (typeof fields.samlAllowIdpInitiated === 'string') candidate.samlAllowIdpInitiated = fields.samlAllowIdpInitiated.toLowerCase() === 'true';
+    if (typeof fields.samlTrustEmailVerified === 'string') candidate.samlTrustEmailVerified = fields.samlTrustEmailVerified.toLowerCase() === 'true';
+    if (typeof fields.samlIdpCertificate === 'string') candidate.samlIdpCertificate = fields.samlIdpCertificate.replace(/\\n/g, '\n');
 
     const parsed = ProviderSchema.safeParse(candidate);
     if (!parsed.success) {
@@ -139,22 +185,8 @@ export function loadSsoConfig(env: Record<string, string | undefined> = process.
       );
       continue;
     }
-    providers.set(id, { ...parsed.data, id });
+    providers.set(id, { ...parsed.data, id, source: 'config' });
   }
-
-  // Startup summary so operators can confirm which providers loaded.
-  // Only non-secret fields (id/type/display name) are logged.
-  logger.info(
-    {
-      module: 'SSO',
-      providers: [...providers.values()].map((p) => ({
-        id: p.id,
-        type: p.type,
-        displayName: p.displayName,
-      })),
-    },
-    `SSO enabled — ${providers.size} provider(s) loaded`
-  );
 
   return {
     enabled: true,
@@ -165,15 +197,131 @@ export function loadSsoConfig(env: Record<string, string | undefined> = process.
   };
 }
 
-let cached: SsoConfig | null = null;
+let cache: SsoConfig | null = null;
 
-/** Cached accessor used by routes/services. */
+/** Sync accessor on the hot path. Falls back to env-only until the first refresh. */
 export function getSsoConfig(): SsoConfig {
-  if (!cached) cached = loadSsoConfig();
-  return cached;
+  return cache ?? loadSsoConfig();
 }
 
-/** Test-only: clear the config cache. */
+/** Merge env (read-only) with the DB layer (editable). */
+export async function buildSsoConfig(
+  env: Record<string, string | undefined> = process.env
+): Promise<SsoConfig> {
+  const envCfg = loadSsoConfig(env);
+  const { getDbSettings, listDbProviders, decryptProviderSecret } = await import('./store');
+
+  const providers = new Map(envCfg.providers); // env providers (source 'config')
+  let dbProviders: Awaited<ReturnType<typeof listDbProviders>> = [];
+  try {
+    dbProviders = await listDbProviders();
+  } catch (error) {
+    logger.error(
+      { module: 'SSO', err: error instanceof Error ? error.message : String(error) },
+      'Failed to load DB SSO providers'
+    );
+  }
+  for (const p of dbProviders) {
+    if (!p.enabled) continue;
+    if (providers.has(p.id)) continue; // env wins on conflict
+    let candidate: Record<string, unknown>;
+    if (p.type === 'saml') {
+      candidate = {
+        type: 'saml',
+        displayName: p.displayName,
+        samlIdpEntityId: p.samlIdpEntityId ?? undefined,
+        samlIdpSsoUrl: p.samlIdpSsoUrl ?? undefined,
+        samlIdpCertificate: p.samlIdpCertificate ?? undefined,
+        samlSpEntityId: (p.samlSpEntityId ?? '') || envCfg.baseUrl, // default SP entityID = base URL
+        samlNameIdFormat: p.samlNameIdFormat ?? undefined,
+        samlAllowIdpInitiated: p.samlAllowIdpInitiated ?? undefined,
+        samlTrustEmailVerified: p.samlTrustEmailVerified ?? undefined,
+        claimMapping: p.claimMapping ? parsePairs(p.claimMapping) : undefined,
+        roleMappingClaim: p.roleMappingClaim ?? undefined,
+        roleMapping: p.roleMapping ? parsePairs(p.roleMapping) : undefined,
+      };
+    } else {
+      candidate = {
+        type: p.type,
+        displayName: p.displayName,
+        issuer: p.issuer ?? undefined,
+        authorizationEndpoint: p.authorizationEndpoint ?? undefined,
+        tokenEndpoint: p.tokenEndpoint ?? undefined,
+        userinfoEndpoint: p.userinfoEndpoint ?? undefined,
+        clientId: p.clientId,
+        clientSecret: decryptProviderSecret(p),
+        scopes: p.scopes,
+        claimMapping: p.claimMapping ? parsePairs(p.claimMapping) : undefined,
+        roleMappingClaim: p.roleMappingClaim ?? undefined,
+        roleMapping: p.roleMapping ? parsePairs(p.roleMapping) : undefined,
+        authParams: p.authParams ? parsePairs(p.authParams) : undefined,
+      };
+    }
+    const parsed = ProviderSchema.safeParse(candidate);
+    if (!parsed.success) {
+      logger.error(
+        {
+          module: 'SSO',
+          provider: p.id,
+          issues: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+        },
+        'Invalid DB SSO provider — skipped'
+      );
+      continue;
+    }
+    providers.set(p.id, { ...parsed.data, id: p.id, source: 'database' });
+  }
+
+  let settings: Awaited<ReturnType<typeof getDbSettings>> = null;
+  try {
+    settings = await getDbSettings();
+  } catch {
+    /* keep env */
+  }
+
+  const baseUrl = (settings?.baseUrl ?? '').trim().replace(/\/$/, '') || envCfg.baseUrl;
+  let enabled = settings ? settings.enabled : envCfg.enabled;
+  if (enabled && !baseUrl) {
+    logger.warn({ module: 'SSO' }, 'SSO enabled but no base_url resolved; disabling SSO');
+    enabled = false;
+  }
+
+  return {
+    enabled,
+    baseUrl,
+    defaultRole: settings ? settings.defaultRole : envCfg.defaultRole,
+    autoLinkByEmail: settings ? settings.autoLinkByEmail : envCfg.autoLinkByEmail,
+    providers,
+  };
+}
+
+/** Rebuild the cache (boot + after each admin mutation). Keeps the previous cache on error. */
+export async function refreshSsoConfig(): Promise<void> {
+  const { resetProviderConfigurationCache } = await import('./client');
+  try {
+    cache = await buildSsoConfig();
+  } catch (error) {
+    logger.error(
+      { module: 'SSO', err: error instanceof Error ? error.message : String(error) },
+      'Failed to rebuild SSO config; keeping previous cache'
+    );
+    return;
+  }
+  resetProviderConfigurationCache();
+  logger.info(
+    {
+      module: 'SSO',
+      providers: [...cache.providers.values()].map((p) => ({
+        id: p.id,
+        type: p.type,
+        source: p.source,
+      })),
+    },
+    `SSO config refreshed — ${cache.providers.size} provider(s)`
+  );
+}
+
+/** Test-only: clear the cache. */
 export function resetSsoConfigCache(): void {
-  cached = null;
+  cache = null;
 }

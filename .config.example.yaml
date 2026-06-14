@@ -128,8 +128,40 @@ auth:
         client_id: "${GOOGLE_CLIENT_ID}"               # set GOOGLE_CLIENT_ID in env or replace here
         client_secret: "${GOOGLE_CLIENT_SECRET}"       # set GOOGLE_CLIENT_SECRET in env or replace here
         scopes: "openid profile email"
-        # Optional: override auto-discovered endpoints
+        # Optional (OIDC): override individual auto-discovered endpoints if the
+        # discovery document is wrong or unreachable. Leave unset to use discovery.
         # authorization_endpoint: https://accounts.google.com/o/oauth2/v2/auth
         # token_endpoint: https://oauth2.googleapis.com/token
         # userinfo_endpoint: https://openidconnect.googleapis.com/v1/userinfo
+        # Optional: remap non-standard ID-token claims to subject/email/username.
         # claim_mapping: "subject:sub,email:email,username:name"
+        # Optional: extra authorization-request params sent to the IdP. Reserved
+        # keys (state, nonce, code_challenge, redirect_uri, scope, ...) are ignored.
+        # auth_params: "hd:example.com,prompt:select_account"
+      #       acme-oauth2:                              # plain OAuth2 (no OIDC discovery)
+      #         type: oauth2
+      #         display_name: "Acme"
+      #         authorization_endpoint: https://acme.example.com/oauth/authorize
+      #         token_endpoint: https://acme.example.com/oauth/token
+      #         userinfo_endpoint: https://acme.example.com/oauth/userinfo
+      #         client_id: "..."
+      #         client_secret: "..."
+      #         scopes: "profile email"
+      #         # Required for OAuth2: map userinfo fields -> subject/email/username.
+      #         claim_mapping: "subject:id,email:email,username:login"
+      #         # auth_params: "audience:https://api.acme.example.com"
+      #       corp-saml:                               # SAML 2.0 (enterprise IdP: Okta, Entra ID, ADFS, ...)
+      #         type: saml
+      #         display_name: "Corporate SSO"
+      #         saml_idp_entity_id: https://idp.example.com/entity   # IdP entityID (the assertion Issuer)
+      #         saml_idp_sso_url: https://idp.example.com/sso         # IdP SSO endpoint (HTTP-Redirect)
+      #         saml_sp_entity_id: https://chouse.example.com         # our SP entityID / audience (often the base URL)
+      #         # PEM cert the IdP signs assertions with (escape newlines as \n in env, or paste in admin UI):
+      #         saml_idp_certificate: "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
+      #         # saml_nameid_format: urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress
+      #         saml_allow_idp_initiated: false        # IdP-initiated is less secure; off by default
+      #         # Map SAML attributes -> user fields and groups -> roles (same as OIDC):
+      #         # claim_mapping: "email:email,username:uid"
+      #         # role_mapping_claim: groups
+      #         # role_mapping: "idp-group-a:admin,idp-group-b:developer"
+      #         # Register this ACS URL at the IdP:  https://chouse.example.com/auth/sso/saml/acs
