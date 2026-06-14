@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v3.3.1] - 2026-06-14
+
+### Fixed
+- **GitHub SSO (and other plain OAuth2 providers)** — userinfo is now fetched directly instead of through the OIDC-only helper, which rejected GitHub's numeric `id`/missing `sub` (`"sub" property must be a string`). GitHub accounts with a private email also now resolve their primary verified address via `/user/emails`, so just-in-time provisioning no longer fails with "did not supply an email address".
+- **SSO attribute-mapping parsing** — claim/role/auth-param mappings now accept either `=` or `:` as the key/value separator, so values entered as `subject=id,...` are parsed correctly instead of silently producing an empty mapping.
+
 ## [v3.3.0] - 2026-06-14
 
 ### Added
@@ -132,20 +138,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Fleet inventory counts all databases** — `schema_totals` query no longer excludes `system`, `INFORMATION_SCHEMA`, and `information_schema` databases; counts now align with what ClickHouse reports on the home page and metrics views
-
-## [v2.17.2] - 2026-06-08
-
-UI consistency fixes across Fleet Doctor, Preferences, and Admin Roles.
-
-### Fixed
-
-- **Fleet inventory cards** — `formatBytes(0)` and `formatNumber(0)` returned an empty string instead of `"0 Bytes"` / `"0.00"` due to a swapped guard order; zero values now display correctly
-- **Fleet Doctor model selector** — replaced native `<select>` on the Doctor page and the Scheduled Scans dialog with a styled Radix `DropdownMenu` matching the AI chat model picker exactly (radio indicators, provider subtitle, mono font, hover effects); added `modal={false}` to prevent Radix focus-trap conflict when the dropdown is inside a dialog
-- **Fleet Doctor time filter** — replaced native `<select>` with a segmented button group (`1h · 6h · 24h · 3d`) consistent with the Fleet page's history range picker
-- **Admin → Roles permission badges** — permission badges now show the full string (e.g. `logs:view`) instead of only the action suffix; 7 missing permission prefixes (`logs`, `parts`, `schema_advisor`, `cluster`, `errors`, `fleet`, `doctor`) added to the category map, eliminating the "Other" catch-all group
-
-### Changed
-
-- **Fleet poller enabled by default** — the background snapshot poller now starts automatically without requiring `FLEET_POLLER_ENABLED=true`; set `FLEET_POLLER_ENABLED=false` to opt out (e.g. in test environments)
-- **Preferences Appearance card** — redesigned from a narrow single-column vertical list to a full-width `grid-cols-4` horizontal card layout with larger icons and centered alignment
 
