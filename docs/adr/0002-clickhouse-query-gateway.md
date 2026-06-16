@@ -255,8 +255,11 @@ that dials back to the gateway — the pattern
 [ch-ui's "Remote ClickHouse Tunnel"](#evaluation-ch-ui-remote-clickhouse-tunnel)
 uses. Keeps ClickHouse ports off the internet.
 
-**Optional `chproxy` sidecar** between gateway and ClickHouse for pooling/quota
-routing — operational only; it does **not** replace app enforcement.
+**Optional `chproxy` sidecar/service** between gateway and ClickHouse for
+connection pooling, replica routing and resource governance — operational only;
+it does **not** replace app enforcement. See
+[Performance & scaling → Leveraging chproxy](#leveraging-chproxy) for topology
+and the two traps specific to our single-service-account design.
 
 ### Evaluation: ch-ui "Remote ClickHouse Tunnel"
 
@@ -274,6 +277,90 @@ authz. So it's a **complementary transport**, not the enforcement design.
 
 ---
 
+## Performance & scaling
+
+The gateway inserts the app into the **data path**, not just the control path:
+
+```
+DataGrip → Gateway (Bun/Hono) → ClickHouse → Gateway → DataGrip
+```
+
+Every byte of every result set now transits the app process (twice — in and back
+out), with a load profile unlike today's UI traffic: **large result sets**, **many
+concurrent/long-lived connections**, and DataGrip's chatty **introspection**
+bursts, all multiplexed alongside the SPA/API on one Bun event loop. The risks:
+
+- **Memory (the dangerous one):** buffering a full result set before forwarding
+  lets a single `SELECT *` over a wide table OOM the pod.
+- **CPU:** PAT verification, SQL parsing, format handling, (de)compression per
+  request.
+- **Concurrency:** long streaming downloads + introspection contend on the event
+  loop and can starve the UI/API.
+- **Extra hop / SPOF:** added latency, ~doubled bandwidth, and the app's scaling
+  is now coupled to *data throughput*, not just request count.
+
+### Streaming (mandatory)
+
+The gateway **must pipe** ClickHouse's HTTP response straight to the client with
+backpressure — never materialize the whole result in memory. Then per-request
+memory is ~O(1) regardless of result size, and a slow client naturally throttles
+the upstream read. The codebase already streams for the UI
+(`/query/execute-stream`, NDJSON); the gateway extends that to arbitrary
+ClickHouse formats and to request bodies (inserts). Combined with the
+**pinned result caps** from [Security](#security-considerations-critical--the-gateway-holds-super-admin)
+(`max_result_rows/bytes`, `max_execution_time`), a runaway can't stream forever.
+Streaming is non-negotiable; everything below is optional scale tuning.
+
+### Leveraging chproxy
+
+[chproxy](https://www.chproxy.org/) is a mature ClickHouse **HTTP-only** proxy
+(matches our HTTP-only gateway). Placed **downstream of the gateway**
+(`gateway → chproxy → ClickHouse`), it adds: **connection pooling**,
+**replica/shard load-balancing** with health checks, per-user **concurrency/rate
+limits + queueing**, **KILL QUERY on client disconnect/timeout**, optional
+**SELECT response caching** (filesystem or Redis), and Prometheus metrics. It
+**never** sees app policies — authz/audit stay in the gateway; chproxy is purely
+connection management + resource governance.
+
+Two traps specific to our **single super-admin service account** design:
+
+1. **chproxy is per-*user*, we forward as one service account.** chproxy maps each
+   "input user" → a real ClickHouse user; ours all route `to_user:
+   <service_account>`. Either use a **single chproxy user = service account**
+   (coarse, *global* limits + pooling), or have the **gateway set chproxy's input
+   user to the app user / tier** (still routing to the service account) to get
+   per-user limits and per-user cache namespacing — *without* per-user ClickHouse
+   users. Because chproxy config is **static YAML (reload on change)**, the latter
+   only scales to a **fixed set of tiers** (e.g. `analyst`/`developer`/`admin`),
+   not thousands of dynamic users. So **fine-grained per-PAT limits stay in the
+   gateway**; chproxy enforces **coarse/tier** limits + pooling.
+2. **Caching can leak across users.** chproxy keys its cache by query text + input
+   user. Since every request hits ClickHouse as the *same* service account, a
+   shared input user would let user A be served user B's cached rows for an
+   identical query — **bypassing data-access policies**. Rule: **enable chproxy
+   caching only when the cache is namespaced per identity** (input user = app
+   user), or restrict it to data-access-equivalent contexts, or **leave caching
+   off** and run chproxy as a pure proxy.
+
+**Topology — sidecar vs. separate Deployment:**
+
+| Topology | Pros | Cons | Use when |
+|----------|------|------|----------|
+| **Sidecar in the ClickHouse pod** | Locality (`localhost:8123`), per-node pooling | Requires you to *own* the CH pods (useless for managed/external CH); limits per node | You run CH in-cluster yourself |
+| **Sidecar in the gateway pod** | Works with external/managed CH; no extra service; simplest | Pooling & limits are **per gateway replica** (not global); cache not shared; CH connections grow with gateway replicas | Single-replica / dev / minimal setup |
+| **Separate Deployment + Service** | **Global** limits & **shared cache** (Redis), centralized CH connection mgmt, replica routing in one place, scales independently; can be the **only** thing allowed to reach CH (NetworkPolicy) | Extra hop + a component to run HA; truly-global concurrency needs few/large replicas or shared state | A real fleet / multiple gateway replicas |
+
+**Recommendation:** default to a **separate chproxy Deployment + Service**,
+NetworkPolicy'd as the **sole reachable path to ClickHouse**, with the gateway
+setting chproxy's input user = app user/tier (per-user limits + safe cache
+namespacing). Use the **gateway-pod sidecar** for single-replica / external-managed
+CH where you just want pooling + KILL-on-disconnect with no new moving parts; the
+**CH-pod sidecar** only if you operate ClickHouse in-cluster and want node
+locality. chproxy stays optional throughout — remove it and the gateway still
+enforces everything, just without pooling/caching/replica routing.
+
+---
+
 ## Consequences
 
 ### Positive
@@ -286,8 +373,10 @@ authz. So it's a **complementary transport**, not the enforcement design.
 - **HTTP-only in v1** → native-TCP `clickhouse-client` CLI unsupported (Future work).
 - A **single high-value boundary** in front of super-admin — parser/allowlist
   correctness is security-critical and needs upkeep as ClickHouse evolves.
-- **Performance:** all native traffic flows through the app (mitigated by
-  streaming + optional `chproxy`).
+- **Performance:** all native traffic flows through the app (it's now in the data
+  path). Mandatory **streaming** prevents memory blowups; an optional **chproxy**
+  deployment adds pooling/limits/replica-routing. See
+  [Performance & scaling](#performance--scaling).
 
 ---
 
