@@ -392,6 +392,149 @@ enforces everything, just without pooling/caching/replica routing.
 
 ---
 
+## MVP proof-of-concept — connect DataGrip (no UI)
+
+The smallest end-to-end slice that lets DataGrip **connect and run a `SELECT`**,
+authenticated by a PAT and authorized by the app's existing rules. **Assumes
+[ADR 0001](./0001-personal-access-tokens.md) is done** (we can call
+`verifyPersonalAccessToken(raw) → { userId, tokenId, isAdmin, permissions,
+connectionId } | null`) and **skips all UI**.
+
+### Key insight — a thin authorizing reverse-proxy
+
+DataGrip's ClickHouse JDBC driver speaks the **HTTP interface**, so the MVP does
+not need to understand result formats: **authenticate + authorize, then forward
+the SQL verbatim to ClickHouse and stream the raw response back** in whatever wire
+format the driver asked for. The whole MVP is two HTTP handlers.
+
+### What DataGrip minimally needs from the HTTP surface
+
+1. `GET /ping` → `Ok.\n` (driver liveness; "Test Connection").
+2. `POST /` (and `GET /?query=…`) → execute a query. Credentials arrive as HTTP
+   Basic password, `X-ClickHouse-Key`, or `?password=`. SQL is `?query=` + body
+   (ClickHouse concatenates them). Version detection is just `SELECT version()`
+   flowing through (2).
+
+### Required changes (server only)
+
+A new Hono sub-app mounted on the existing server, e.g. `app.route("/gateway",
+gatewayRoutes)` (or a dedicated port). Reuses `getConnectionWithPassword`
+(`rbac/services/connections.ts`) and `validateQueryAccess`
+(`middleware/dataAccess.ts`) unchanged.
+
+```ts
+// packages/server/src/gateway/routes.ts  — illustrative MVP, not production
+import { Hono } from "hono";
+import { verifyPersonalAccessToken } from "../rbac/services/pat";        // ADR 0001
+import { getConnectionWithPassword } from "../rbac/services/connections";
+import { validateQueryAccess } from "../middleware/dataAccess";
+
+const gateway = new Hono();
+
+// ClickHouse-style plaintext error so the driver surfaces it cleanly.
+const chError = (c, status: number, msg: string) =>
+  c.text(`Code: ${status}. ${msg}\n`, status);
+
+// 1. Liveness
+gateway.get("/ping", (c) => c.text("Ok.\n"));
+
+// 2. Query execution (the only real handler)
+gateway.on(["GET", "POST"], "/", async (c) => {
+  // a. PAT = the ClickHouse "password"/key (the username field is informational)
+  const pat =
+    c.req.header("X-ClickHouse-Key") ??
+    basicAuthPassword(c.req.header("Authorization")) ??
+    new URL(c.req.url).searchParams.get("password");
+  const id = pat ? await verifyPersonalAccessToken(pat) : null;
+  if (!id) return chError(c, 516, "Authentication failed");          // AUTHENTICATION_FAILED
+
+  // b. SQL = ?query= + body (as ClickHouse concatenates them)
+  const url = new URL(c.req.url);
+  const sql = `${url.searchParams.get("query") ?? ""}\n${await c.req.text()}`.trim();
+  if (!sql) return chError(c, 400, "Empty query");
+
+  // c. MVP safety: read-only PoC — allow only SELECT/SHOW/DESCRIBE, single statement
+  if (!isSingleReadOnly(sql)) return chError(c, 481, "Only read queries are allowed (PoC)");
+
+  // d. Reuse the EXISTING enforcement (same code the UI uses)
+  const database = url.searchParams.get("database") ?? undefined;
+  const access = await validateQueryAccess(
+    id.userId, id.isAdmin, id.permissions, sql, database, id.connectionId,
+  );
+  if (!access.allowed) return chError(c, 497, access.reason ?? "Access denied"); // ACCESS_DENIED
+
+  // e. Forward to the PAT's bound connection AS THE SERVICE ACCOUNT
+  const conn = await getConnectionWithPassword(id.connectionId);
+  if (!conn) return chError(c, 501, "Connection unavailable");
+  const up = new URL(`${conn.sslEnabled ? "https" : "http"}://${conn.host}:${conn.port}/`);
+  // forward only safe params; PIN protective settings; never trust client settings
+  if (database) up.searchParams.set("database", database);
+  const fmt = url.searchParams.get("default_format");
+  if (fmt) up.searchParams.set("default_format", fmt);
+  up.searchParams.set("readonly", "1");                 // coarse PoC guard (see caveat)
+  up.searchParams.set("max_result_rows", "1000000");
+  up.searchParams.set("max_execution_time", "60");
+  up.searchParams.set("query_id", crypto.randomUUID()); // server-issued attribution
+  up.searchParams.set("log_comment", JSON.stringify({ pat: id.tokenId, user: id.userId }));
+
+  const resp = await fetch(up, {
+    method: "POST",
+    headers: { Authorization: "Basic " + btoa(`${conn.username}:${conn.password ?? ""}`) },
+    body: sql,                                          // verbatim SQL
+  });
+
+  // f. Stream ClickHouse's native response straight back (O(1) memory)
+  return new Response(resp.body, {
+    status: resp.status,
+    headers: { "Content-Type": resp.headers.get("Content-Type") ?? "text/plain" },
+  });
+});
+
+export default gateway;
+```
+
+Helpers (`basicAuthPassword`, `isSingleReadOnly`) are a few lines each;
+`isSingleReadOnly` can lean on the existing `node-sql-parser` to assert exactly
+one statement whose type is `select`/`show`/`describe`.
+
+### Try it (no UI)
+
+```bash
+# liveness
+curl https://chouse.example.com/gateway/ping            # → Ok.
+
+# a query, PAT as the key (or  -u "me:chpat_…"  for Basic)
+curl 'https://chouse.example.com/gateway/?query=SELECT%20now()' \
+     -H 'X-ClickHouse-Key: chpat_AbC123_…'
+```
+
+**DataGrip:** New Data Source → ClickHouse; **Host/Port** = the gateway; **User** =
+anything; **Password** = the PAT; enable SSL; set the JDBC driver **`path`**
+property to `/gateway` (so the driver hits `/gateway/ping` and `/gateway/`).
+Test Connection runs `SELECT 1` through handler (2).
+
+### In scope vs. deliberately deferred
+
+**In (MVP):** `/ping`; PAT auth; **reuse** of RBAC + data-access via
+`validateQueryAccess`; read-only SELECT path; verbatim-forward + **streamed**
+passthrough; pinned `readonly`/`max_result_rows`/`max_execution_time`;
+server-issued `query_id` + `log_comment` attribution; one audit log line.
+
+**Out (later phases):** writes/DDL behind permissions; the full
+**escape-hatch denylist** (`url()/file()/s3()/remote()`, `SYSTEM`, DCL, sensitive
+`system.*`) and forwardable-settings allowlist; strict multi-statement handling;
+format negotiation beyond passthrough; **chproxy**; per-PAT rate/concurrency
+limits; live-query registration + kill; the `gateway:*` permissions; TLS /
+NetworkPolicy hardening; **all UI**.
+
+> **⚠️ PoC only — do not expose to untrusted users as-is.** `readonly=1` blocks
+> writes and settings changes but **not** read-side exfiltration (e.g. `SELECT …
+> FROM url(…)`/`s3(…)`, sensitive `system.*`). The MVP is safe for a trusted
+> internal demo; the **Phase 2 escape-hatch denylist is required before public
+> exposure**, because the downstream account is super-admin.
+
+---
+
 ## Implementation plan (phased)
 
 **Prereq — ADR 0001 (PAT)** shipped: `verifyPersonalAccessToken`, connection
