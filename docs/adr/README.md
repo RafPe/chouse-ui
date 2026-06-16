@@ -23,10 +23,10 @@ We use a lightweight [MADR](https://adr.github.io/madr/)-style template:
 
 ## Index
 
+_No ADRs yet — the first accepted decision will appear here._
+
 | ADR | Title | Status |
 |-----|-------|--------|
-| [0001](./0001-personal-access-tokens.md) | Personal Access Tokens (PAT) | Proposed |
-| [0002](./0002-clickhouse-query-gateway.md) | Native ClickHouse access via an app-enforced Query Gateway (depends on 0001) | Proposed |
 
 ## Conventions
 
