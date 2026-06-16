@@ -20,13 +20,20 @@ gateway checks your permissions and forwards approved queries to ClickHouse.
 ## 1. Create a Personal Access Token _(planned)_
 
 1. In CHouse UI, open **Preferences → Access Tokens**.
-2. Click **Create token**. Give it a name (e.g. `datagrip-laptop`), an optional
-   expiry, and an optional scope (e.g. limit it to one connection / read-only).
+2. Click **Create token** and set:
+   - a **name** (e.g. `datagrip-prod`),
+   - the **connection** this token is for — **required**; each token works
+     against exactly one connection, so mint one per cluster you need,
+   - an **expiry** within the allowed range (minimum **5 minutes**; the maximum
+     is set by your admin — there are no never-expiring tokens),
+   - optionally a narrower **permission scope** (e.g. read-only).
 3. Copy the token **immediately** — it looks like `chpat_AbC123_…` and is shown
    **only once**. Store it in your password manager.
 
-A token carries *your* identity and *your* permissions. Treat it like a
-password: don't share it, and revoke it from the same screen if it leaks.
+A token carries *your* identity and *your* permissions on its connection. Treat
+it like a password: don't share it, and revoke it from the same screen if it
+leaks. There's a per-user limit on how many active tokens you can hold (set by
+your admin); if you hit it, revoke an old one first.
 
 ---
 
@@ -75,39 +82,25 @@ jdbc:clickhouse://chouse.your-company.com:443/default?ssl=true
 
 ---
 
-## 3a. Choosing which connection (when you have more than one)
+## 3a. Working with more than one connection
 
 Your CHouse UI account may have access to **several connections** (each is a
-different ClickHouse cluster). A DataGrip data source maps to **one** connection.
-Pick whichever of these fits — they're listed easiest-first:
+different ClickHouse cluster). You **don't** select the connection in DataGrip —
+**each token is bound to one connection**, so the connection is decided by which
+token you use:
 
-**Option 1 — a connection-scoped token (recommended).** When you mint the PAT,
-scope it to a single connection. Then there's nothing to configure here: the
-gateway routes by the token. Create one data source per connection, each with its
-own scoped PAT. Bonus: revoking that token only affects that connection.
+- Create **one data source per connection**, each authenticated with the PAT you
+  minted for that connection.
+- To reach a second cluster, mint a second token (scoped to that connection) and
+  add a second data source.
+- Revoking a token only affects its connection.
 
-**Option 2 — name the connection on the data source.** If you use one unscoped
-token across connections, tell the gateway which connection this data source
-targets. In **Advanced** (driver properties), add **one** of:
-
-| Driver property | Value |
-|-----------------|-------|
-| `custom_http_headers` | `X-CHouse-Connection=prod` |
-| `custom_http_params`  | `chouse_connection=prod` |
-
-(`prod` is the connection's slug — ask your admin or copy it from the connection
-list in CHouse UI. Both properties are comma-separated if you ever add more.)
-
-**Option 3 — a per-connection host.** Your admin may give each connection its own
-hostname (e.g. `prod.chouse.your-company.com`). Just use that host and the
-connection is implied — no extra fields.
+Your admin may also give each connection a friendly **hostname** (e.g.
+`prod.chouse.your-company.com`) to make the data sources easy to tell apart — but
+that's just cosmetic; the token is what determines the connection.
 
 > The **Database** field is *not* the connection — it picks a database *inside*
-> the chosen connection. Selecting the connection (above) and the default
-> database are two separate things.
->
-> If you have multiple connections and don't scope/select one, the gateway
-> returns an error listing your available connection slugs so you can pick.
+> the token's connection. They're two separate things.
 
 ---
 

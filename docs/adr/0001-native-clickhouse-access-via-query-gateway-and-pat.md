@@ -87,7 +87,9 @@ Concretely:
 
 1. **Personal Access Tokens (PAT)** — a new credential type a user can mint in
    the UI and paste into a native tool as the ClickHouse "password". The PAT
-   *is* the bearer of the user's app identity for non-browser clients.
+   *is* the bearer of the user's app identity for non-browser clients. Every PAT
+   is **bound to exactly one connection** and has a **bounded, non-infinite
+   expiry**; the number of active PATs per user is **capped** (see PAT design).
 2. **Query Gateway** — a new listener implementing the subset of the ClickHouse
    HTTP API that real clients use, authenticating via PAT and reusing the
    enforcement pipeline.
@@ -173,33 +175,25 @@ therefore decide **which connection** a session maps to. Note a *connection* is 
 whole ClickHouse endpoint; the JDBC **database** field selects a DB *within* the
 chosen connection and is orthogonal to this.
 
-The gateway resolves the target connection in this order (fail-closed):
+**Decision: a PAT is always bound to exactly one connection.** Connection
+selection is therefore **carried by the credential itself** — there is no
+ambiguity to resolve at query time and no client-side selector to configure:
 
-1. **Connection-scoped PAT (recommended default).** If the PAT was bound to a
-   `connection_id` at mint time, that connection is **fixed** — it is a security
-   boundary, so any conflicting routing hint is **rejected**, not overridden.
-   This is the simplest UX: one PAT (and one DataGrip data source) per
-   connection, with zero extra client configuration, and per-connection
-   revocation for free.
-2. **Explicit routing hint (unscoped PAT only).** The client names the
-   connection by its slug via either:
-   - HTTP header `X-CHouse-Connection: <slug>` — set in the driver's
-     `custom_http_headers`; or
-   - query param `chouse_connection=<slug>` — set in the driver's
-     `custom_http_params`.
-3. **Host/path routing (unscoped PAT).** Operators may expose a per-connection
-   **subdomain** (`prod.chouse…` / routed by TLS SNI + `Host`) or **URL path
-   prefix** (`…/ch/prod`), so each data source maps 1:1 to a connection with no
-   custom fields. Best at scale.
-4. **User default connection.** Fall back to the user's `isDefault` connection
-   **only if it is unambiguous** (the `isDefault` flag already exists in the
-   connection model).
-5. **Otherwise → error.** Return a ClickHouse-shaped error listing the user's
-   available connection slugs and how to disambiguate, rather than guessing.
+- The connection is **fixed by the PAT's `connection_id`** and treated as a
+  security boundary. Any client-supplied routing hint that names a *different*
+  connection is **rejected**, never honoured.
+- UX: **one PAT — and one DataGrip data source — per connection.** To work
+  against two clusters, mint two tokens. Per-connection revocation comes for
+  free (revoking a token only affects its connection).
+- The bound connection must still be one the user's **data-access policies
+  permit** at mint time *and* at query time; if access is later revoked, the PAT
+  stops working. The PAT never widens access beyond the user's policies.
+- Operators may optionally expose a per-connection **subdomain/host or path**
+  purely as ergonomic convenience (a human-friendly endpoint per cluster); it is
+  **not** a selector, since the PAT already determines the connection.
 
-Whatever the source, the chosen connection must be one the user's data-access
-policies actually permit — the selector picks *among allowed* connections; it
-never widens access.
+The JDBC **database** field still selects a DB *within* the bound connection and
+is orthogonal to connection selection.
 
 ---
 
@@ -223,8 +217,10 @@ chpat_<tokenId>_<secret>
 ### Storage & verification
 
 - New table `rbac_personal_access_tokens`:
-  `id` (= tokenId), `user_id`, `name`, `secret_hash`, `connection_id` (nullable
-  scope), `scopes` (nullable, default = inherit user permissions), `expires_at`,
+  `id` (= tokenId), `user_id`, `name`, `secret_hash`,
+  `connection_id` (**NOT NULL** — every PAT is bound to one connection),
+  `scopes` (nullable, default = inherit the user's permissions for that
+  connection), `expires_at` (**NOT NULL** — no infinite tokens),
   `last_used_at`, `created_at`, `revoked_at`, `created_ip`.
 - **Hashing:** the secret is high-entropy, so a **SHA-256** + constant-time
   compare is sufficient and fast — we deliberately avoid Argon2id here because
@@ -236,15 +232,42 @@ chpat_<tokenId>_<secret>
 ### Lifecycle
 
 - **Mint / list / revoke** in the UI (Preferences → Access Tokens) and via
-  authenticated API. Listing never returns the secret.
-- **Expiry** required (sane default, e.g. 90 days; admin-configurable max).
+  authenticated API. Minting **requires** picking a target connection and a TTL
+  within the allowed bounds (below). Listing never returns the secret.
+- **Connection binding (mandatory):** every PAT targets exactly one connection
+  the user may access — see [Connection selection](#connection-selection-which-cluster-a-session-targets).
+- **Expiry (mandatory, bounded):** no infinite tokens. The requested TTL must
+  fall within `[5 minutes, AUTH_PAT_MAX_TTL]` (see Limits) and is rejected
+  otherwise; if omitted it defaults to `min(default, AUTH_PAT_MAX_TTL)`.
+  Expired tokens are rejected at auth time and swept by a periodic job.
+- **Per-user cap:** a user may hold at most `AUTH_PAT_MAX_PER_USER` **active**
+  (non-expired, non-revoked) tokens; minting beyond the cap is refused with a
+  message to revoke an existing token first.
 - **Rotation** = mint new + revoke old.
-- **Scope** (optional): restrict a PAT to a single connection and/or a subset of
-  the user's permissions (least privilege for a BI tool that only needs SELECT).
+- **Permission scope (optional):** a PAT may be further narrowed to a subset of
+  the user's permissions on that connection (least privilege for a BI tool that
+  only needs SELECT). It can never exceed the user's own permissions.
 - **Revocation** is immediate (cache TTL bounds the window) and on user
   disable/delete the user's PATs are cascaded revoked.
 - **Audit** events: `pat.create`, `pat.revoke`, `pat.use_failed`, and every
   gateway query carries the originating `tokenId`.
+
+### Limits & configuration
+
+Expiry bounds and the per-user cap are **operator-controlled**. The 5-minute
+floor is a fixed hard minimum (a token shorter than that is never useful and only
+adds churn); the maximum and the cap are admin-configurable.
+
+| YAML | Env | Default | Meaning |
+|------|-----|---------|---------|
+| — | — | `5m` (fixed floor) | Minimum TTL a PAT may be minted with; requests below are rejected. Not configurable. |
+| `auth.pat.max_ttl` | `AUTH_PAT_MAX_TTL` | `90d` | Maximum TTL an admin allows. A mint request above this is rejected; the UI clamps the picker to it. |
+| `auth.pat.default_ttl` | `AUTH_PAT_DEFAULT_TTL` | `30d` | TTL used when the user doesn't specify one (always clamped into `[5m, max_ttl]`). |
+| `auth.pat.max_per_user` | `AUTH_PAT_MAX_PER_USER` | `10` | Max **active** tokens per user; minting beyond this is refused. |
+
+Durations accept `m`/`h`/`d` suffixes (e.g. `5m`, `12h`, `90d`). Validation is
+enforced **server-side** (the authoritative boundary); the UI mirrors the same
+bounds for a good experience but is never the only gate.
 
 ### Why not reuse the existing API keys / JWT refresh tokens?
 
@@ -421,7 +444,9 @@ transport**, not the enforcement design — the gateway + PAT remains the core.
 
 - Do we pin the downstream account to **read-only** for v1 and add writes behind
   an explicit permission in Phase 2?
-- Should PATs default to **inherit-all** user permissions, or **require** an
-  explicit scope (least privilege by default)?
+- Should a PAT's **permission scope** default to **inherit-all** (the user's
+  permissions on the bound connection), or **require** an explicit narrower
+  subset (least privilege by default)? *(Connection binding itself is decided:
+  always exactly one connection.)*
 - Where do we draw the `system.*` allowlist line for legitimate engineer
   introspection vs. exfiltration?
