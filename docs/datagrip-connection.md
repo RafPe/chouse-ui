@@ -75,6 +75,42 @@ jdbc:clickhouse://chouse.your-company.com:443/default?ssl=true
 
 ---
 
+## 3a. Choosing which connection (when you have more than one)
+
+Your CHouse UI account may have access to **several connections** (each is a
+different ClickHouse cluster). A DataGrip data source maps to **one** connection.
+Pick whichever of these fits — they're listed easiest-first:
+
+**Option 1 — a connection-scoped token (recommended).** When you mint the PAT,
+scope it to a single connection. Then there's nothing to configure here: the
+gateway routes by the token. Create one data source per connection, each with its
+own scoped PAT. Bonus: revoking that token only affects that connection.
+
+**Option 2 — name the connection on the data source.** If you use one unscoped
+token across connections, tell the gateway which connection this data source
+targets. In **Advanced** (driver properties), add **one** of:
+
+| Driver property | Value |
+|-----------------|-------|
+| `custom_http_headers` | `X-CHouse-Connection=prod` |
+| `custom_http_params`  | `chouse_connection=prod` |
+
+(`prod` is the connection's slug — ask your admin or copy it from the connection
+list in CHouse UI. Both properties are comma-separated if you ever add more.)
+
+**Option 3 — a per-connection host.** Your admin may give each connection its own
+hostname (e.g. `prod.chouse.your-company.com`). Just use that host and the
+connection is implied — no extra fields.
+
+> The **Database** field is *not* the connection — it picks a database *inside*
+> the chosen connection. Selecting the connection (above) and the default
+> database are two separate things.
+>
+> If you have multiple connections and don't scope/select one, the gateway
+> returns an error listing your available connection slugs so you can pick.
+
+---
+
 ## 4. Recommended DataGrip settings
 
 DataGrip runs background **introspection** queries to populate its schema tree.

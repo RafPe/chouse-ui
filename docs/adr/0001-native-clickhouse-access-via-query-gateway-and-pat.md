@@ -164,6 +164,43 @@ copy of the policy engine.
    a server-issued `query_id` and a per-user `quota_key`, so existing
    "kill query" / live monitoring keeps working.
 
+### Connection selection (which cluster a session targets)
+
+A user can have access to **multiple control-plane connections** (each = a
+ClickHouse endpoint + its own service-account credential), but a DataGrip data
+source is a single `(host, port, database, user, password)`. The gateway must
+therefore decide **which connection** a session maps to. Note a *connection* is a
+whole ClickHouse endpoint; the JDBC **database** field selects a DB *within* the
+chosen connection and is orthogonal to this.
+
+The gateway resolves the target connection in this order (fail-closed):
+
+1. **Connection-scoped PAT (recommended default).** If the PAT was bound to a
+   `connection_id` at mint time, that connection is **fixed** — it is a security
+   boundary, so any conflicting routing hint is **rejected**, not overridden.
+   This is the simplest UX: one PAT (and one DataGrip data source) per
+   connection, with zero extra client configuration, and per-connection
+   revocation for free.
+2. **Explicit routing hint (unscoped PAT only).** The client names the
+   connection by its slug via either:
+   - HTTP header `X-CHouse-Connection: <slug>` — set in the driver's
+     `custom_http_headers`; or
+   - query param `chouse_connection=<slug>` — set in the driver's
+     `custom_http_params`.
+3. **Host/path routing (unscoped PAT).** Operators may expose a per-connection
+   **subdomain** (`prod.chouse…` / routed by TLS SNI + `Host`) or **URL path
+   prefix** (`…/ch/prod`), so each data source maps 1:1 to a connection with no
+   custom fields. Best at scale.
+4. **User default connection.** Fall back to the user's `isDefault` connection
+   **only if it is unambiguous** (the `isDefault` flag already exists in the
+   connection model).
+5. **Otherwise → error.** Return a ClickHouse-shaped error listing the user's
+   available connection slugs and how to disambiguate, rather than guessing.
+
+Whatever the source, the chosen connection must be one the user's data-access
+policies actually permit — the selector picks *among allowed* connections; it
+never widens access.
+
 ---
 
 ## Personal Access Tokens (PAT) — design
