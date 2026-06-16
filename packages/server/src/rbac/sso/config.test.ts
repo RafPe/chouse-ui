@@ -84,6 +84,19 @@ describe('loadSsoConfig', () => {
     if (okta!.type === 'oidc') expect(okta!.issuer).toBe('https://corp.okta.com');
   });
 
+  it('defaults adminSsoEnabled to false (break-glass admin excluded from SSO)', () => {
+    expect(loadSsoConfig(baseEnv()).adminSsoEnabled).toBe(false);
+    // Also defaults off on the disabled config.
+    expect(loadSsoConfig({}).adminSsoEnabled).toBe(false);
+  });
+
+  it('enables adminSsoEnabled only for the literal "true"', () => {
+    expect(loadSsoConfig({ ...baseEnv(), AUTH_ADMIN_SSO_ENABLED: 'true' }).adminSsoEnabled).toBe(true);
+    expect(loadSsoConfig({ ...baseEnv(), AUTH_ADMIN_SSO_ENABLED: 'TRUE' }).adminSsoEnabled).toBe(true);
+    expect(loadSsoConfig({ ...baseEnv(), AUTH_ADMIN_SSO_ENABLED: 'false' }).adminSsoEnabled).toBe(false);
+    expect(loadSsoConfig({ ...baseEnv(), AUTH_ADMIN_SSO_ENABLED: 'yes' }).adminSsoEnabled).toBe(false);
+  });
+
   it('keeps OIDC endpoint overrides and claim mapping (not stripped)', () => {
     const env = {
       ...baseEnv(),
@@ -242,5 +255,13 @@ describe('buildSsoConfig', () => {
 
     // DB-only provider is merged with source 'database'
     expect(cfg.providers.get('google')!.source).toBe('database');
+  });
+
+  it('sources adminSsoEnabled from env/YAML only (never the DB settings row)', async () => {
+    // getDbSettings is mocked to null; the opt-in must come straight from env.
+    expect((await buildSsoConfig(baseEnv())).adminSsoEnabled).toBe(false);
+    expect(
+      (await buildSsoConfig({ ...baseEnv(), AUTH_ADMIN_SSO_ENABLED: 'true' })).adminSsoEnabled
+    ).toBe(true);
   });
 });

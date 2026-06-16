@@ -6,7 +6,8 @@
  * map because flattenConfig() cannot represent YAML arrays.
  *
  * Env shape: AUTH_SSO_ENABLED, AUTH_SSO_BASE_URL, AUTH_SSO_DEFAULT_ROLE,
- * AUTH_SSO_AUTO_LINK_BY_EMAIL, AUTH_SSO_PROVIDERS_<ID>_<FIELD>.
+ * AUTH_SSO_AUTO_LINK_BY_EMAIL, AUTH_ADMIN_SSO_ENABLED,
+ * AUTH_SSO_PROVIDERS_<ID>_<FIELD>.
  */
 
 import { z } from 'zod';
@@ -117,7 +118,21 @@ export interface SsoConfig {
   baseUrl: string;
   defaultRole: string;
   autoLinkByEmail: boolean;
+  /**
+   * Whether the seeded break-glass admin (isSystemUser) may be managed via SSO.
+   * Defaults to FALSE: the admin is a local, password-only account that is never
+   * auto-linked, JIT-provisioned, or role-synced by an IdP, and always keeps its
+   * password login. Set AUTH_ADMIN_SSO_ENABLED=true (or auth.admin_sso.enabled
+   * in YAML) only when an operator deliberately wants the admin behind SSO.
+   * Config-only on purpose — this is a security boundary, not a UI toggle.
+   */
+  adminSsoEnabled: boolean;
   providers: Map<string, SsoProviderConfig>;
+}
+
+/** Parse the break-glass admin SSO opt-in. Defaults OFF; only "true" enables it. */
+function parseAdminSsoEnabled(env: Record<string, string | undefined>): boolean {
+  return (env.AUTH_ADMIN_SSO_ENABLED ?? 'false').toLowerCase() === 'true';
 }
 
 const FIELD_TO_KEY: Record<string, string> = {
@@ -150,6 +165,7 @@ export function loadSsoConfig(env: Record<string, string | undefined> = process.
     baseUrl: '',
     defaultRole: 'viewer',
     autoLinkByEmail: true,
+    adminSsoEnabled: parseAdminSsoEnabled(env),
     providers: new Map(),
   };
   if (!enabled) return disabled;
@@ -200,6 +216,7 @@ export function loadSsoConfig(env: Record<string, string | undefined> = process.
     baseUrl,
     defaultRole: env.AUTH_SSO_DEFAULT_ROLE || 'viewer',
     autoLinkByEmail: (env.AUTH_SSO_AUTO_LINK_BY_EMAIL ?? 'true').toLowerCase() !== 'false',
+    adminSsoEnabled: parseAdminSsoEnabled(env),
     providers,
   };
 }
@@ -298,6 +315,9 @@ export async function buildSsoConfig(
     baseUrl,
     defaultRole: settings ? settings.defaultRole : envCfg.defaultRole,
     autoLinkByEmail: settings ? settings.autoLinkByEmail : envCfg.autoLinkByEmail,
+    // Break-glass admin SSO is a config-only security boundary: it is never
+    // sourced from the editable DB settings row, only from env/YAML.
+    adminSsoEnabled: envCfg.adminSsoEnabled,
     providers,
   };
 }

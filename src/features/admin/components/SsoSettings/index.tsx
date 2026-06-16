@@ -40,6 +40,7 @@ import {
   Power,
   PowerOff,
   Copy,
+  ShieldAlert,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { log } from "@/lib/log";
@@ -675,6 +676,32 @@ function SettingsPanel({ canEdit }: { canEdit: boolean }) {
             onCheckedChange={(v) => setForm((f) => ({ ...f, autoLinkByEmail: v }))}
             disabled={!editable}
           />
+        </div>
+
+        {/* Break-glass admin — read-only status of the config-only opt-in. */}
+        <div className="flex items-start gap-2 rounded-xs border border-ink-500 bg-ink-200 px-3 py-2.5">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-paper-dim" aria-hidden />
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <Label className="text-[13px] font-medium text-paper">Break-glass admin in SSO</Label>
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-xs border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.12em]",
+                  settings?.adminSsoEnabled
+                    ? "border-amber-900/60 bg-amber-950/30 text-amber-200"
+                    : "border-emerald-900/60 bg-emerald-950/30 text-emerald-200",
+                )}
+              >
+                <Lock className="h-2.5 w-2.5" />
+                {settings?.adminSsoEnabled ? "opted in" : "excluded · default"}
+              </span>
+            </div>
+            <span className={HELP_CLASS}>
+              {settings?.adminSsoEnabled
+                ? "The seeded local administrator can be linked and managed via SSO. Ensure it still has a recovery path."
+                : "The seeded local administrator is excluded from SSO — never auto-linked, JIT-provisioned, or role-synced, and always keeps password login. Set AUTH_ADMIN_SSO_ENABLED=true to opt in."}
+            </span>
+          </div>
         </div>
 
         {canEdit && !hasProviders && (

@@ -48,6 +48,10 @@ export default function Login() {
   const { login, isLoading, error, isAuthenticated, clearError } = useRbacStore();
   const [showPassword, setShowPassword] = useState(false);
   const [ssoExpanded, setSsoExpanded] = useState(false);
+  // Break-glass: when password login is globally disabled the form is hidden,
+  // but the seeded local admin can still sign in with a password (server-side
+  // guarantee). This reveals the form so that recovery path stays reachable.
+  const [showBreakGlass, setShowBreakGlass] = useState(false);
 
   // Show a few providers up front; collapse the rest behind a toggle so a long
   // provider list doesn't push the password form off the card.
@@ -77,6 +81,9 @@ export default function Login() {
     retry: false,
   });
   const passwordLoginEnabled = authConfig?.passwordLoginEnabled ?? true;
+  // Render the password form when it's enabled for everyone, or when the
+  // operator has expanded the break-glass admin sign-in.
+  const showPasswordForm = passwordLoginEnabled || showBreakGlass;
 
   const form = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
@@ -209,13 +216,36 @@ export default function Login() {
                 </div>
               )}
 
-              {!passwordLoginEnabled && (
-                <p className="text-center text-[13px] text-paper-muted">
-                  Password sign-in is disabled. Continue with single sign-on above.
-                </p>
+              {!passwordLoginEnabled && !showBreakGlass && (
+                <div className="flex flex-col items-center gap-3">
+                  <p className="text-center text-[13px] text-paper-muted">
+                    Password sign-in is disabled. Continue with single sign-on above.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowBreakGlass(true)}
+                    className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-paper-faint transition-colors hover:text-paper-muted focus:outline-none focus-visible:text-paper"
+                  >
+                    <Lock className="h-3 w-3" aria-hidden />
+                    Administrator break-glass sign-in
+                  </button>
+                </div>
               )}
 
-              {passwordLoginEnabled && (
+              {!passwordLoginEnabled && showBreakGlass && (
+                <div
+                  className="mb-5 flex items-start gap-2 rounded-xs border border-amber-900/60 bg-amber-950/30 px-3 py-2.5 text-[12px] text-amber-200"
+                  role="note"
+                >
+                  <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-300" aria-hidden />
+                  <span>
+                    Break-glass sign-in — only the local administrator account can authenticate
+                    here while SSO is enforced.
+                  </span>
+                </div>
+              )}
+
+              {showPasswordForm && (
               <Form {...form}>
                 <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-5">
                   <FormField

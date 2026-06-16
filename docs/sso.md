@@ -26,6 +26,7 @@ the **admin UI** (stored in the database). Both can be active at once.
 - [SAML provider](#saml-provider)
 - [Role mapping & provisioning](#role-mapping--provisioning)
 - [Disabling password login](#disabling-password-login)
+- [Break-glass administrator account](#break-glass-administrator-account)
 - [Security notes](#security-notes)
 - [Deployment caveat: multi-replica SAML](#deployment-caveat-multi-replica-saml)
 - [Troubleshooting](#troubleshooting)
@@ -260,6 +261,59 @@ auth:
 - When effective, the login page hides the password form and the
   `POST /api/rbac/auth/login` endpoint returns `403`. SSO buttons remain.
 - Changing your own password (for accounts that still have one) is unaffected.
+- **The break-glass admin is exempt** — see the next section. Even with password
+  login disabled, the seeded local administrator can always sign in with its
+  password, and the login page exposes an "Administrator break-glass sign-in"
+  link to reveal the form.
+
+---
+
+## Break-glass administrator account
+
+The seeded administrator (created on first boot — `admin@localhost` by default,
+flagged internally as a *system user*) is treated as a **local, break-glass
+account that is out of scope for SSO by default**. This follows the industry
+pattern of keeping at least one highly-privileged account excluded from
+federation so an IdP outage or misconfiguration can never lock you out
+(e.g. [Microsoft Entra ID emergency-access accounts](https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/security-emergency-access)).
+
+By default (`AUTH_ADMIN_SSO_ENABLED` unset or `false`) the SSO flow will:
+
+- **never auto-link** the admin to an IdP identity by email — even with
+  `auto_link_by_email` on and a verified, matching email. The attempt is refused
+  and logged loudly (audit `auth.sso_login_failed` + a `warn` log).
+- **never JIT-provision** over the admin's email — the account already exists, so
+  provisioning fails closed.
+- **never role-sync** the admin from IdP claims — its roles are local-only.
+- **always keep password login**, independent of the global
+  [password-login toggle](#disabling-password-login).
+
+| YAML | Env | Default | Description |
+|------|-----|---------|-------------|
+| `auth.admin_sso.enabled` | `AUTH_ADMIN_SSO_ENABLED` | `false` | Opt in to managing the seeded admin via SSO (auto-link / role-sync). **Config-only** — there is no UI toggle, by design. |
+
+```yaml
+auth:
+  admin_sso:
+    enabled: false   # keep the local admin out of SSO (recommended)
+```
+
+The admin SSO admin screen surfaces this state read-only under **Global
+settings → Break-glass admin in SSO** (`excluded · default` vs `opted in`).
+
+**Operating the break-glass account** (recommended practice):
+
+- Set a strong, unique `RBAC_ADMIN_PASSWORD` — never ship the default
+  `admin123!` to production.
+- Treat it as emergency-only: store the credential securely (vault / sealed
+  envelope), use it rarely, and monitor `auth.login` events for it.
+- Day-to-day administration should use normal RBAC users (optionally via SSO),
+  not this account.
+
+Only flip `AUTH_ADMIN_SSO_ENABLED=true` if you deliberately want the admin behind
+your IdP **and** you have another tested recovery path. Other protections still
+apply to everyone: a `super_admin` is never demoted by IdP claims, and password
+login is never globally disabled without a usable SSO provider.
 
 ---
 
