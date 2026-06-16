@@ -226,19 +226,13 @@ export default function Login() {
                 </div>
               )}
 
-              {!authMethodsLoading && !passwordLoginEnabled && ssoProviders.length > 0 && (
+              {/* Password sign-in disabled — the server only reports this when at
+                  least one usable SSO provider exists (it force-enables password
+                  login otherwise, to prevent lockout), so SSO buttons are always
+                  rendered above this message. */}
+              {!authMethodsLoading && !passwordLoginEnabled && (
                 <p className="text-center text-[13px] text-paper-muted">
                   Password sign-in is disabled. Continue with single sign-on above.
-                </p>
-              )}
-
-              {/* Misconfiguration: password sign-in is off and no SSO provider is
-                  configured, so there is no way in. Tell the user plainly rather
-                  than pointing them to options that don't exist. */}
-              {!authMethodsLoading && !passwordLoginEnabled && ssoProviders.length === 0 && (
-                <p className="text-center text-[13px] text-paper-muted">
-                  No sign-in methods are available. Password sign-in is disabled and no
-                  single sign-on provider is configured — please contact your administrator.
                 </p>
               )}
 
