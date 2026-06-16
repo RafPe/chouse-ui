@@ -25,7 +25,8 @@ We use a lightweight [MADR](https://adr.github.io/madr/)-style template:
 
 | ADR | Title | Status |
 |-----|-------|--------|
-| [0001](./0001-native-clickhouse-access-via-query-gateway-and-pat.md) | Native ClickHouse access via an app-enforced Query Gateway + Personal Access Tokens | Proposed |
+| [0001](./0001-personal-access-tokens.md) | Personal Access Tokens (PAT) | Proposed |
+| [0002](./0002-clickhouse-query-gateway.md) | Native ClickHouse access via an app-enforced Query Gateway (depends on 0001) | Proposed |
 
 ## Conventions
 

@@ -1,10 +1,11 @@
 # Connecting JetBrains DataGrip to ClickHouse through CHouse UI
 
-> **Status:** this guide describes the experience delivered by the **Query
-> Gateway + Personal Access Token (PAT)** feature proposed in
-> [ADR 0001](./adr/0001-native-clickhouse-access-via-query-gateway-and-pat.md).
-> It documents the intended workflow; sections marked _(planned)_ land with that
-> feature.
+> **Status:** this guide describes the experience delivered by two proposed
+> features: the **Query Gateway**
+> ([ADR 0002](./adr/0002-clickhouse-query-gateway.md)) and the **Personal Access
+> Tokens** it depends on ([ADR 0001](./adr/0001-personal-access-tokens.md)).
+> It documents the intended workflow; sections marked _(planned)_ land with those
+> features.
 
 CHouse UI can act as a **ClickHouse-compatible HTTP endpoint** so you can use
 DataGrip (or any HTTP/JDBC ClickHouse tool) while still going through the app's
@@ -159,6 +160,6 @@ If a query is rejected you'll get a ClickHouse-style error describing why
 - **HTTP/JDBC tools only.** The native-TCP `clickhouse-client` CLI is not
   supported through the gateway in this iteration (it speaks ClickHouse's binary
   protocol on port 9000). HTTP-based clients — DataGrip, BI tools, `curl` — are
-  supported. See [ADR 0001 → Future work](./adr/0001-native-clickhouse-access-via-query-gateway-and-pat.md#implementation-plan-phased).
+  supported. See [ADR 0002 → Future work](./adr/0002-clickhouse-query-gateway.md#implementation-plan-phased).
 - **Your token = your permissions.** A PAT can never do more than your CHouse UI
   user can; scope it down for tools that only need to read.
