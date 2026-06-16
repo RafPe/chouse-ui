@@ -50,6 +50,8 @@ const baseSsoConfig = {
   baseUrl: "https://app.example.com",
   defaultRole: "viewer",
   autoLinkByEmail: true,
+  // Break-glass admin is excluded from SSO by default (opt-in off).
+  adminSsoEnabled: false,
   providers: new Map(),
 };
 let currentSsoConfig = { ...baseSsoConfig };
@@ -231,6 +233,11 @@ beforeEach(() => {
   for (const fn of Object.values(mockFns)) {
     fn.mockClear();
   }
+  // mockClear() keeps any per-test mockImplementation overrides (e.g. the JIT-race
+  // tests make createUser throw and getUserIdentity count calls). Restore the
+  // default implementations so those overrides don't leak into later tests.
+  mockFns.getUserIdentity.mockImplementation(async (_p: string, _s: string) => mockGetUserIdentityResult);
+  mockFns.createUser.mockImplementation(async (_input: unknown) => mockCreateUserResult);
   mockDb.select.mockClear();
   mockDb.delete.mockClear();
   mockDb.insert.mockClear();
@@ -590,5 +597,82 @@ describe("provisionSsoUser", () => {
     // … and the email-based re-resolution path is gone (step 2 skipped it for
     // the unverified email; the catch must not call it either).
     expect(mockFns.getUserByEmail).not.toHaveBeenCalled();
+  });
+
+  // ----------------------------------------------------------------
+  // Break-glass admin: excluded from SSO by default (adminSsoEnabled = false)
+  // ----------------------------------------------------------------
+  const systemAdminRow = { ...existingUserRow, id: "admin-1", isSystemUser: true };
+
+  it("15. break-glass admin: auto-link by email is REFUSED when admin SSO opt-in is off", async () => {
+    // No prior identity; verified email matches the seeded local admin.
+    mockGetUserIdentityResult = null;
+    mockGetUserByEmailResult = systemAdminRow;
+
+    const identity = makeIdentity({ emailVerified: true });
+    await expect(provisionSsoUser(makeProvider(), identity)).rejects.toThrow(/break-glass/i);
+
+    // Must NOT link the IdP identity to the admin, and must NOT mint a session.
+    expect(mockFns.createUserIdentity).not.toHaveBeenCalled();
+    expect(mockFns.createSessionAndTokens).not.toHaveBeenCalled();
+  });
+
+  it("16. break-glass admin: JIT can never absorb the seeded admin — createUser collides on the unique email and fails closed", async () => {
+    // autoLinkByEmail is off, so the link-by-email guard isn't exercised. The
+    // admin still cannot be JIT-provisioned: it pre-exists, so createUser hits
+    // the unique-email constraint and the flow fails closed with no session.
+    currentSsoConfig = { ...baseSsoConfig, autoLinkByEmail: false };
+    mockGetUserIdentityResult = null;
+    mockGetUserByUsernameResults.set("alice", null);
+    mockFns.createUser.mockImplementation(async () => {
+      throw new Error("UNIQUE constraint failed: rbac_users.email");
+    });
+    // No identity exists for the admin on this provider, so re-resolve finds none.
+    mockFns.getUserIdentity.mockImplementation(async () => null);
+
+    const identity = makeIdentity({ email: "admin@localhost", emailVerified: true });
+    await expect(provisionSsoUser(makeProvider(), identity)).rejects.toThrow();
+
+    expect(mockFns.createSessionAndTokens).not.toHaveBeenCalled();
+  });
+
+  it("17. break-glass admin: role sync is SKIPPED for a system user when opt-in is off", async () => {
+    // Existing identity resolves to the system admin; role mapping would apply,
+    // but the break-glass guard must keep IdP claims away from its roles.
+    mockGetUserIdentityResult = existingIdentityRow;
+    mockDbUserRow = { ...systemAdminRow };
+    // Roles intentionally do NOT include super_admin, to isolate the
+    // isSystemUser guard from the pre-existing super_admin skip.
+    mockGetUserRolesResult = ["viewer"];
+    mockGetRoleByNameResult = { id: "role-admin", name: "admin", displayName: "Admin" };
+
+    const provider = makeProvider({
+      roleMappingClaim: "groups",
+      roleMapping: { "ch-admins": "admin" },
+    });
+    const identity = makeIdentity({ claims: { groups: ["ch-admins"] } });
+
+    await provisionSsoUser(provider, identity);
+
+    // Roles untouched, but the admin's existing-identity sign-in still succeeds.
+    expect(mockDb.delete).not.toHaveBeenCalled();
+    expect(mockDb.insert).not.toHaveBeenCalled();
+    expect(mockFns.createSessionAndTokens).toHaveBeenCalled();
+  });
+
+  it("18. break-glass admin: with the opt-in ON, auto-link by email proceeds normally", async () => {
+    currentSsoConfig = { ...baseSsoConfig, adminSsoEnabled: true };
+    mockGetUserIdentityResult = null;
+    mockGetUserByEmailResult = systemAdminRow;
+    mockDbUserRow = { ...systemAdminRow };
+
+    const identity = makeIdentity({ emailVerified: true });
+    const result = await provisionSsoUser(makeProvider(), identity);
+
+    // Opt-in lifts the guard: the admin is linked like any other user.
+    expect(mockFns.createUserIdentity).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: systemAdminRow.id })
+    );
+    expect(result.outcome).toBe("linked");
   });
 });

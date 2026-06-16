@@ -14,6 +14,7 @@ import {
   logoutAllSessions,
   updateUserPassword,
   getUserById,
+  getUserByEmailOrUsername,
   createAuditLogWithContext,
   listRoles,
 } from '../services/rbac';
@@ -69,14 +70,24 @@ authRoutes.post('/login', zValidator('json', LoginSchema), async (c) => {
   // credentials, and audit the attempt — a password POST while disabled is a
   // security-relevant signal. change-password is unaffected: it verifies the
   // current password via authenticateUser directly, not through this route.
+  //
+  // Break-glass exception: the seeded local admin (isSystemUser) can ALWAYS sign
+  // in with its password, independent of this global toggle, so an IdP outage or
+  // misconfiguration can never lock everyone out. We resolve the identifier here
+  // only to check that flag — credential verification still happens below. A
+  // non-admin (or unknown identifier) stays rejected, so this leaks nothing an
+  // attacker couldn't already infer.
   if (!getPasswordLoginEnabled()) {
-    await createAuditLogWithContext(c, AUDIT_ACTIONS.LOGIN_FAILED, undefined, {
-      details: { identifier, reason: 'password_login_disabled' },
-      ipAddress,
-      status: 'failure',
-      errorMessage: 'Password login is disabled',
-    });
-    throw AppError.forbidden('Password login is disabled. Please use single sign-on.');
+    const candidate = await getUserByEmailOrUsername(identifier);
+    if (!candidate?.isSystemUser) {
+      await createAuditLogWithContext(c, AUDIT_ACTIONS.LOGIN_FAILED, undefined, {
+        details: { identifier, reason: 'password_login_disabled' },
+        ipAddress,
+        status: 'failure',
+        errorMessage: 'Password login is disabled',
+      });
+      throw AppError.forbidden('Password login is disabled. Please use single sign-on.');
+    }
   }
 
   let result;

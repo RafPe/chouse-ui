@@ -6,6 +6,12 @@
  *   2. else verified-email match (when auto_link_by_email) -> link + that user
  *   3. else JIT-create with default role
  * Providers with role_mapping re-sync roles on every login.
+ *
+ * Break-glass admin: the seeded local administrator (isSystemUser) is OUT OF
+ * SCOPE for SSO unless the operator explicitly opts in (AUTH_ADMIN_SSO_ENABLED /
+ * auth.admin_sso.enabled). When the opt-in is off it is never auto-linked,
+ * never JIT-absorbed, and never role-synced — guaranteeing a local, IdP-
+ * independent recovery path. Attempts to absorb it are refused and logged.
  */
 
 import { randomUUID } from 'crypto';
@@ -30,6 +36,30 @@ import type { TokenPair } from '../services/jwt';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyDb = any;
+
+/** User-facing message when an SSO flow tries to absorb the break-glass admin. */
+const BREAK_GLASS_REFUSAL_MESSAGE =
+  'This is a local break-glass administrator account and cannot be managed via SSO. Sign in with its password, or enable admin SSO (AUTH_ADMIN_SSO_ENABLED) to opt in.';
+
+/**
+ * True when `user` is the seeded break-glass admin (isSystemUser) AND the
+ * operator has not opted into managing it via SSO. Such a user must never be
+ * auto-linked, JIT-absorbed, or role-synced by an IdP.
+ */
+function isBreakGlassAdminLocked(
+  user: { isSystemUser?: boolean | null } | null | undefined,
+  adminSsoEnabled: boolean
+): boolean {
+  return Boolean(user?.isSystemUser) && !adminSsoEnabled;
+}
+
+/** Loud, security-relevant log when an SSO flow is refused for the break-glass admin. */
+function logBreakGlassRefusal(action: string, providerId: string, userId: string): void {
+  logger.warn(
+    { module: 'SSO', provider: providerId, userId, action },
+    `Refused SSO ${action} for break-glass admin (admin SSO opt-in disabled)`
+  );
+}
 
 /**
  * How an SSO sign-in resolved to a local user. Surfaced so the route layer can
@@ -81,6 +111,14 @@ export async function provisionSsoUser(
   if (!user && config.autoLinkByEmail && identity.email && identity.emailVerified) {
     const byEmail = await getUserByEmail(identity.email);
     if (byEmail) {
+      // Break-glass guard: never auto-link the seeded local admin to an IdP
+      // identity unless the operator opted in. Email is an identifier, not proof
+      // of ownership — silently linking the highest-privilege account by a
+      // claimed email is exactly the account-takeover path we must refuse.
+      if (isBreakGlassAdminLocked(byEmail, config.adminSsoEnabled)) {
+        logBreakGlassRefusal('auto-link by email', provider.id, byEmail.id);
+        throw AppError.forbidden(BREAK_GLASS_REFUSAL_MESSAGE);
+      }
       // Fix 5 (path 2): check isActive before createUserIdentity side effect
       if (!byEmail.isActive) {
         throw AppError.unauthorized('This account is inactive. Contact an administrator to reactivate it.');
@@ -101,6 +139,13 @@ export async function provisionSsoUser(
   }
 
   // 3. JIT create
+  //
+  // The break-glass admin needs no special handling here: it is seeded and
+  // always pre-exists with a unique email, so JIT (which only ever creates NEW
+  // users) can never absorb or duplicate it — createUser collides on the unique
+  // email and fails closed via the unique-violation handling below. The one
+  // place the admin could be silently pulled into SSO is the link-by-email path
+  // above, which is guarded explicitly.
   if (!user) {
     if (!identity.email) {
       throw AppError.unauthorized(
@@ -167,15 +212,24 @@ export async function provisionSsoUser(
     throw AppError.unauthorized('This account is inactive. Contact an administrator to reactivate it.');
   }
 
-  // Optional role sync
+  // Optional role sync — never drive the break-glass admin's roles from IdP
+  // claims while the opt-in is off (belt-and-suspenders with the super_admin
+  // skip inside syncMappedRoles, since the seeded admin holds super_admin).
   if (provider.roleMapping && provider.roleMappingClaim) {
-    await syncMappedRoles(
-      user.id,
-      provider,
-      provider.roleMappingClaim,
-      provider.roleMapping,
-      identity.claims
-    );
+    if (isBreakGlassAdminLocked(user, config.adminSsoEnabled)) {
+      logger.warn(
+        { module: 'SSO', provider: provider.id, userId: user.id },
+        'Skipping role sync for break-glass admin (admin SSO opt-in disabled)'
+      );
+    } else {
+      await syncMappedRoles(
+        user.id,
+        provider,
+        provider.roleMappingClaim,
+        provider.roleMapping,
+        identity.claims
+      );
+    }
   }
 
   const session = await createSessionAndTokens(user, ipAddress, userAgent);

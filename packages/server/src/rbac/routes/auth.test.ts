@@ -12,6 +12,7 @@ const mockLogoutUser = mock();
 const mockLogoutAllSessions = mock();
 const mockUpdateUserPassword = mock();
 const mockGetUserById = mock();
+const mockGetUserByEmailOrUsername = mock(async () => null as Record<string, unknown> | null);
 const mockCreateAuditLog = mock(async () => { });
 const mockCreateAuditLogWithContext = mock(async () => { });
 const mockValidatePasswordStrength = mock(() => ({ valid: true, errors: [] }));
@@ -25,6 +26,7 @@ mock.module("../services/rbac", () => ({
     logoutAllSessions: mockLogoutAllSessions,
     updateUserPassword: mockUpdateUserPassword,
     getUserById: mockGetUserById,
+    getUserByEmailOrUsername: mockGetUserByEmailOrUsername,
     createAuditLog: mockCreateAuditLog,
     createAuditLogWithContext: mockCreateAuditLogWithContext,
     listRoles: mock(async () => []),
@@ -93,6 +95,8 @@ describe("RBAC Auth Routes", () => {
         mockLogoutAllSessions.mockClear();
         mockUpdateUserPassword.mockClear();
         mockGetUserById.mockClear();
+        mockGetUserByEmailOrUsername.mockClear();
+        mockGetUserByEmailOrUsername.mockResolvedValue(null);
         mockCreateAuditLog.mockClear();
         mockCreateAuditLogWithContext.mockClear();
         mockValidatePasswordStrength.mockClear();
@@ -183,6 +187,44 @@ describe("RBAC Auth Routes", () => {
                     status: "failure",
                 })
             );
+        });
+
+        it("allows the break-glass system admin to log in even when password login is disabled", async () => {
+            mockGetPasswordLoginEnabled.mockReturnValue(false);
+            // Identifier resolves to the seeded local admin (isSystemUser).
+            mockGetUserByEmailOrUsername.mockResolvedValue({ id: "admin-1", isSystemUser: true });
+            mockAuthenticateUser.mockResolvedValue({
+                user: { id: "admin-1", username: "admin" },
+                tokens: { accessToken: "access", refreshToken: "refresh" },
+            });
+
+            const res = await app.request("/auth/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ identifier: "admin", password: "admin123!" }),
+            });
+
+            expect(res.status).toBe(200);
+            // The disabled gate must be bypassed for the break-glass admin, so
+            // credentials ARE verified rather than rejected up front.
+            expect(mockAuthenticateUser).toHaveBeenCalled();
+            const body = await res.json();
+            expect(body.data.user.id).toBe("admin-1");
+        });
+
+        it("still rejects a non-system user when password login is disabled", async () => {
+            mockGetPasswordLoginEnabled.mockReturnValue(false);
+            // A normal user (not isSystemUser) resolving from the identifier.
+            mockGetUserByEmailOrUsername.mockResolvedValue({ id: "user-9", isSystemUser: false });
+
+            const res = await app.request("/auth/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ identifier: "alice", password: "password" }),
+            });
+
+            expect(res.status).toBe(403);
+            expect(mockAuthenticateUser).not.toHaveBeenCalled();
         });
     });
 

@@ -126,6 +126,9 @@ ssoAdminRoutes.get("/settings", requirePermission(PERMISSIONS.SSO_VIEW), async (
       baseUrl: cfg.baseUrl,
       defaultRole: cfg.defaultRole,
       autoLinkByEmail: cfg.autoLinkByEmail,
+      // Read-only: the break-glass admin SSO opt-in is config-only (env/YAML),
+      // surfaced so the UI can show whether the local admin is in/out of SSO.
+      adminSsoEnabled: cfg.adminSsoEnabled,
       source,
     },
   });

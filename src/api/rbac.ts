@@ -1699,6 +1699,10 @@ export interface SsoAdminSettings {
   baseUrl: string | null;
   defaultRole: string;
   autoLinkByEmail: boolean;
+  // Whether the seeded break-glass admin may be managed via SSO. Read-only here:
+  // it is config-only (AUTH_ADMIN_SSO_ENABLED / auth.admin_sso.enabled) and
+  // defaults to false, keeping the local admin out of SSO.
+  adminSsoEnabled: boolean;
   // 'config' → env/YAML-defined, read-only; 'database' → editable DB row;
   // 'default' → nothing configured yet (editable, creates the first row).
   source: 'config' | 'database' | 'default';
@@ -1745,7 +1749,9 @@ export const rbacSsoAdminApi = {
     return rbacFetch<SsoAdminSettings>('/sso-admin/settings');
   },
 
-  async updateSettings(input: Omit<SsoAdminSettings, 'source'>): Promise<void> {
+  async updateSettings(
+    input: Omit<SsoAdminSettings, 'source' | 'adminSsoEnabled'>
+  ): Promise<void> {
     await rbacFetch('/sso-admin/settings', { method: 'PUT', body: JSON.stringify(input) });
   },
 
